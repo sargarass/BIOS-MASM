@@ -1,0 +1,2462 @@
+Microsoft (R) Macro Assembler Version 12.00.30723.0	    06/05/17 21:50:11
+src/bios.asm						     Page 1 - 1
+
+
+				;.586 было
+				.586p
+
+				include macros.asm
+			      C EndOfInterrupt macro
+			      C         mov al, 020h        out 020h, al        endm
+			      C 
+			      C rloop macro reg, label
+			      C        dec reg
+			      C        jnz label
+			      C        endm
+			      C 
+			      C _TEXT32_END_ = ((_TEXT32_END - 1) SHR 4)
+			      C 
+ = 00C9			      C PutString macro string
+			      C local whilelocal exitlocal str        pusha
+			      C         mov ebx, offset str + 0F0000h
+			      C         jmp while
+			      C str:
+			      C         db string, 0
+			      C while:  mov al, byte ptr cs:[ebx]
+			      C         test al, al        je exit
+			      C         call putchar
+			      C         inc bx        jmp while
+			      C exit:
+			      C         popa        endm
+			      C 
+			      C ClearWindow macro
+			      C local while        push bx        push ax        call video_init
+			      C         mov bx, VM_SIZE
+			      C while:
+			      C         mov byte ptr gs:[bx - 2], ' '        mov byte ptr gs:[bx - 1], 05h        dec bx        dec bx        jnz while
+			      C         pop ax        pop cxendm
+			      C 
+			      C NewLine macro
+			      C local x        push ax        push bx        mov ax, ds:[VM_POS]
+			      C         mov bl, 160        div bl        mul bl        add ax, 160        cmp ax, VM_SIZE
+			      C         jle x
+			      C         xor ax, axx:      mov ds:[VM_POS], ax
+			      C         call updatecursor
+			      C 
+			      C         pop bx        pop axendm
+			      C 
+			      C 
+			      C ;rem equ <;>
+			      C 
+			      C handler macro name
+			      C         name equ $ - _TEXT32_BEGIN  + 0F0000h
+			      C endm
+			      C 
+			      C copy macro _offset, _mem_pos, _size
+			      C        mov ax, cs       mov ds, ax       mov si, offset _offset
+			      C        mov ax, _mem_pos/16
+			      C        mov es, ax       xor di, di       mov cx, _size/4
+			      C        cld       rep movsdendm
+			      C 
+			      C descriptor macro parmlist:vararg
+			      C         _limit=0
+			      C         _base=0
+			      C         _g=0
+			      C         _x=0
+			      C         _l=0
+			      C         _p=1
+			      C         _dpl=0
+			      C         _c=0
+			      C         _r=-1
+			      C         _a=0
+			      C         _w=-1
+			      C         _ed=0
+			      C         _type=-1
+			      C 
+			      C         FOR p, <parmlist>
+			      C                 ;rem    p                _eqchar INSTR <p>, <=>
+			      C                 _name SUBSTR <p>, 1, _eqchar-1
+			      C                 _name2 TEXTEQU _name
+			      C                 _value SUBSTR <p>, _eqchar+1
+			      C                 _xerrno = 1
+			      C 
+			      C                 FOR nm, <_limit,_base,_g,_x,_l,_p,_dpl,_c,_r,_a,_w,_ed,_type>
+			      C                         IFIDN _name2, <nm>
+			      C                                 _xerrno=0
+			      C                         ENDIF
+			      C                 ENDM
+			      C                 IF _xerrno EQ 0
+			      C                                 p
+			      C                 ELSE
+			      C                         _emsg CATSTR <Wrong parameter name >, _name
+			      C                                 .ERR _emsg
+			      C                 ENDIF
+			      C         ENDM
+			      C 
+			      C         IF _limit LE 00100000h
+			      C                                 dw      _limit MOD 10000h
+			      C         ELSE                                dw      (_limit/4096) MOD 10000h
+			      C         ENDIF                                dw      (_base) MOD 10000h
+			      C                                 db      (_base/10000h) MOD 0100h
+			      C         IF _type NE -1
+			      C                 IF (_type NE 0) AND (_type NE 1) AND (_type NE 9) AND (_type NE 3) AND (_type NE 11) AND (_type NE 2)
+			      C                                 .ERR <Wrong type of system descriptor; can be 1,3,9,11 (TSS), 2 (LDT), 0 (x64 extended)>                ELSE                                db      (_p SHL 7) + (_dpl SHL 5) + (_type)
+			      C                 ENDIF        ELSE                IF _r NE -1
+			      C                                 db      (_p SHL 7) + (_dpl SHL 5) + 011000b + (_c SHL 2) + (_r SHL 1) + (_a)
+			      C                 ELSE                        IF _w NE -1
+			      C                                 db      (_p SHL 7) + (_dpl SHL 5) + 010000b + (_ed SHL 2) + (_w SHL 1) + (_a)
+			      C                         ELSE                                db      0
+			      C                         ENDIF                ENDIF        ENDIF        IF _limit LE 00100000h
+			      C                                 db      (_g SHL 7) + (_x SHL 6) + (_l SHL 5) + ((_limit SHR 16) MOD 10h)
+			      C         ELSE                                db      10000000b + (_x SHL 6) + (_l SHL 5) + ((_limit SHR 28) MOD 10h)
+			      C         ENDIF                                db      (_base SHR 24) MOD 0100h
+			      C endm
+			      C 
+			      C intdescriptor macro properties:vararg
+			      C         _offset=0
+			      C         _selector=0
+			      C         _t=0
+			      C         _use32=1
+			      C         _dpl=0
+			      C         _p=1
+			      C 
+			      C         for p, <properties>
+			      C                 _sep instr <p>, <=>
+			      C                 _name substr <p>, 1, _sep-1
+			      C                 _valid=1
+			      C         for valid_name, <_offset, _selector, _t, _use32, _dpl, _p>
+			      C                 ifidn _name, <valid_name>
+			      C                 _valid=0
+			      C                 endif
+			      C         endm
+			      C         if _valid eq 0
+			      C                 p
+			      C         else
+			      C                 _emsg catstr <Wrong parameter name >, _name
+			      C                 .ERR _emsg
+			      C                 endif
+			      C         endm
+			      C 
+			      C         dw _offset AND 0FFFFh
+			      C         dw _selector
+			      C         db 0
+			      C         db _t+6+(_use32 SHL 3)+(_dpl SHL 5)+(_p SHL 7)
+			      C         dw _offset SHR 16
+			      C endm
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+			      C 
+				include data.asm
+			      C ;typedef struct Timer{
+ = 0400			      C TIMER_VALUE equ 400h
+			      C ;}
+			      C 
+			      C ;typedef struct Queue{
+ = 000F			      C KB_QUEUE_CAP   equ  00Fh ; 16 элементов
+ = 0404			      C KB_QUEUE_COUNT equ  404h
+ = 0406			      C KB_QUEUE_HEAD  equ  406h
+ = 0408			      C KB_QUEUE_TAIL  equ  408h
+ = 040A			      C KB_QUEUE_DATA  equ  40Ah ; 40:0A - 40:4A KB_DATA
+ = 0450			      C KB_TIMEOUT     equ  450h
+ = 0452			      C KB_BUTTON_FLAG equ  452h;
+			      C ;}
+			      C 
+			      C ;typedef struct Video{
+ = 0060			      C VM_POS equ 060h
+ = B800			      C VM_BASE equ 0B800h
+ = 0FA0			      C VM_SIZE equ 4000
+			      C ;}
+			      C 
+ = 1000			      C GDT_MEM_POS equ 1000h
+ = 1500			      C IDT_MEM_POS equ 1500h
+			      C 
+			      C 
+ = 0020			      C PIC_C0 equ 020h ; command PIC 0
+ = 00A0			      C PIC_C1 equ 0A0h ; command PIC 1
+ = 0021			      C PIC_D0 equ 021h ; data PIC 0
+ = 00A1			      C PIC_D1 equ 0A1h ; data PIC 1
+ = 0070			      C CMOS_REG=070h
+ = 0092			      C SYS_CONTROL_PORT_A=92h
+			      C 
+ 00000000			_TEXT32 segment byte public 'CODE' use32
+ 00000000 = 00000000		_TEXT32_BEGIN=$
+				org     100h
+
+ 00000100			nmi_enable proc near
+ 00000100  E4 70		        in al, CMOS_REG
+ 00000102  0C 7F		        or al, 01111111b
+ 00000104  E6 70		        out CMOS_REG, al
+ 00000106  C3			        ret
+ 00000107			nmi_enable endp
+
+ 00000107			start32:
+ 00000107  66| B8 0010		        mov ax, (DS_dsc - GDT)
+ 0000010B  66| 8E D8		        mov ds, ax
+ 0000010E  66| 8E C0		        mov es, ax
+ 00000111  66| 8E E0		        mov fs, ax
+ 00000114  66| B8 0018		        mov ax, (GS_dsc - GDT)
+ 00000118  66| 8E E8		        mov gs, ax
+
+ 0000011B  33 DB		        xor ebx, ebx
+ 0000011D  66| B8 0020		        mov ax, (SS_dsc - GDT)
+ 00000121  66| 8E D0		        mov ss, ax
+ 00000124  BC 00000FFE		        mov esp, 0FFEh
+ 00000129  E8 FFFFFFD2		        call nmi_enable
+ 0000012E  E8 00000015		        call pit_init
+ 00000133  E8 0000004B		        call keyboard_init
+ 00000138  E8 000005F8		        call pic_init
+ 0000013D  E8 00000AE4		        call video_init
+ 00000142  FB			        sti
+ 00000143  E8 000006F0		        call stop
+				        include timer.asm
+ 00000148		      C pit_init proc near
+ 00000148  66| 50	      C         push ax
+			      C 
+ 0000014A  66| C7 05	      C         mov word ptr ds:[TIMER_VALUE], 0
+	   00000400 0000
+			      C         ; 110110
+			      C         ; 0 - двоичный счётчик
+			      C         ; 011 переодический генератор меандра
+			      C         ; 11 - оба байта счётчика используюся
+ 00000153  B0 36	      C         mov al, 00110110b ; 70 Hz
+ 00000155  E6 43	      C         out 43h, al ; управляющий регистр
+			      C 
+ 00000157  66| B8 4296	      C         mov ax, 17046
+ 0000015B  E6 40	      C         out 40h, al
+ 0000015D  8A C4	      C         mov al, ah
+ 0000015F  E6 40	      C         out 40h, al
+			      C 
+ 00000161  66| 58	      C         pop ax
+			      C 
+ 00000163  C3		      C         ret
+ 00000164		      C pit_init endp
+			      C 
+				        include keyboard_init.asm
+ = 000000FA		      C KB_ACK    equ 0FAh
+ = 000000AA		      C KB_TESTOK equ 0AAh
+			      C 
+			      C 
+ 00000164		      C KB_INIT_TABLE:
+			      C ;  КОД | ПОРТ |КОЛВО ОТВЕТОВ | ОТВЕТ(ы)
+ 00000164  AA 64 01 55	      C db 0AAh, 064h, 1, 055h
+ 00000168  AB 64 01 00	      C db 0ABh, 064h, 1, 000h
+ 0000016C  AE 64 00	      C db 0AEh, 064h, 0
+ 0000016F  FF 60 02 FA AA     C db 0FFh, 060h, 2, KB_ACK, KB_TESTOK
+ 00000174  F5 60 01 FA	      C db 0F5h, 060h, 1, KB_ACK
+ 00000178  60 64 00	      C db 060h, 064h, 0
+ 0000017B  61 60 00	      C db 061h, 060h, 0
+ 0000017E  F4 60 01 FA	      C db 0F4h, 060h, 1, KB_ACk
+ 00000182  00		      C db 0h
+			      C 
+			      C CMOS_READ_TIME macro
+			      C         mov al, 0        out 70h, al        in al, 71hendm
+			      C 
+			      C KB_GET_TIMEOUT macro
+			      C local waitlocal wait2       pusha       push ecx       CMOS_READ_TIME
+			      C        xor ecx, ecx       mov ah, al
+			      C wait:
+			      C        CMOS_READ_TIME
+			      C        cmp ah, al       je wait
+			      C        mov ah, al
+			      C wait2:
+			      C        inc ecx       CMOS_READ_TIME
+			      C        cmp ah, al       je wait2
+			      C        mov dword ptr ds:[KB_TIMEOUT], ecx       pop ecx       popaendm
+			      C 
+			      C keyboard_init proc near
+			      C         pusha
+			      C         push ecx
+			      C         KB_GET_TIMEOUT()
+			      C 
+			      C         call kb_queue_init
+			      C 
+			      C         mov word ptr ds:[KB_BUTTON_FLAG], 0
+			      C         xor ebx, ebx
+			      C         xor dx, dx
+			      C 
+			      C 
+			      C wrepeat:
+			      C ;;====Ожидание пустого буффера====
+			      C 
+			      C         mov ecx, dword ptr ds:[KB_TIMEOUT] ; CMOS - 1 секунда
+ 00000183		      C w0:     in al, 64h ; считываем из порта
+ 00000183  60		      C         test al, 02h
+ 00000184  51		      C         jz short w01
+			      C         rloop ecx, w0
+ 00000185  60		     1C        pusha
+ 00000186  51		     1C        push ecx
+ 00000187  B0 00	     2C         mov al, 0
+ 00000189  E6 70	     2C         out 70h, al
+ 0000018B  E4 71	     2C         in al, 71h
+ 0000018D  33 C9	     1C        xor ecx, ecx
+ 0000018F  8A E0	     1C        mov ah, al
+ 00000191		     1C ??0000:
+ 00000191  B0 00	     2C         mov al, 0
+ 00000193  E6 70	     2C         out 70h, al
+ 00000195  E4 71	     2C         in al, 71h
+ 00000197  3A E0	     1C        cmp ah, al
+ 00000199  74 F6	     1C        je ??0000
+ 0000019B  8A E0	     1C        mov ah, al
+ 0000019D		     1C ??0001:
+ 0000019D  41		     1C        inc ecx
+ 0000019E  B0 00	     2C         mov al, 0
+ 000001A0  E6 70	     2C         out 70h, al
+ 000001A2  E4 71	     2C         in al, 71h
+ 000001A4  3A E0	     1C        cmp ah, al
+ 000001A6  74 F5	     1C        je ??0001
+ 000001A8  89 0D 00000450    1C        mov dword ptr ds:[KB_TIMEOUT], ecx
+ 000001AE  59		     1C        pop ecx
+ 000001AF  61		     1C        popa
+			      C         jmp on_error
+ 000001B0  E8 000005DA	      C ;;================================
+			      C w01:
+ 000001B5  66| C7 05	      C         mov al, byte ptr [ebx + KB_INIT_TABLE + 0F0000h] ; команда в al
+	   00000452 0000
+ 000001BE  33 DB	      C         mov dl, byte ptr [ebx + KB_INIT_TABLE + 1 + 0F0000h] ; закидываем порт
+ 000001C0  66| 33 D2	      C         out dx, al
+			      C         mov ah, byte ptr [ebx + KB_INIT_TABLE + 2 + 0F0000h] ; колво ответов
+			      C         lea ebx, [ebx + 3]
+ 000001C3		      C 
+			      C         cmp ah, 0 ;; Нужно ли ждать ответы?
+			      C         je wnext
+ 000001C3  8B 0D 00000450     C 
+ 000001C9  E4 64	      C wanswer:
+ 000001CB  A8 02	      C 
+ 000001CD  74 05	      C         mov ecx, dword ptr ds:[KB_TIMEOUT]
+			      C ;;====Ожидание ответа====
+ 000001CF  49		     1C        dec ecx
+ 000001D0  75 F7	     1C        jnz w0
+ 000001D2  EB 49	      C w1:     in al, 064h
+			      C         test al, 01h
+ 000001D4		      C         jnz short w11
+ 000001D4  2E: 8A 83	      C         rloop ecx, w1
+	   000F0164 R
+ 000001DB  2E: 8A 93	      C         jmp on_error
+	   000F0165 R
+ 000001E2  EE		      C ;;=======================
+ 000001E3  2E: 8A A3	      C w11:
+	   000F0166 R
+ 000001EA  8D 5B 03	      C         in al, 060h
+			      C         mov dl, byte ptr [ebx + KB_INIT_TABLE + 0F0000h] ;; Ожидаемый ответ
+ 000001ED  80 FC 00	      C         inc ebx
+ 000001F0  74 23	      C         cmp al, dl ; Полученный == Ожидаемый?
+			      C         jne on_error
+ 000001F2		      C 
+			      C         dec ah
+ 000001F2  8B 0D 00000450     C         jnz wanswer
+			      C 
+ 000001F8  E4 64	      C wnext:
+ 000001FA  A8 01	      C         cmp [ebx], 0 ; Дошли ли до конца таблицы
+ 000001FC  75 05	      C         jne wrepeat ; Если нет, продолжаем посылать команды
+			      C         pop ecx
+ 000001FE  49		     1C        dec ecx
+ 000001FF  75 F7	     1C        jnz w1
+ 00000201  EB 1A	      C         popa
+			      C         ret
+ 00000203		      C 
+ 00000203  E4 60	      C on_error:
+ 00000205  2E: 8A 93	      C         PutString "| ERROR |"
+	   000F0164 R
+ 0000020C  43		      C         jmp on_error
+ 0000020D  3A C2	      C keyboard_init endp 
+ 0000020F  75 0C	      C 
+			      C 
+ 00000211  FE CC	      C 
+ 00000213  75 DD	      C 
+			      C 
+ 00000215		      C 
+ 00000215  83 3B 00	      C 
+ 00000218  75 A9	      C 
+ 0000021A  59		      C 
+ 0000021B  61		      C 
+ 0000021C  C3		      C 
+			      C 
+ 0000021D		      C 
+			      C 
+ 0000021D  60		     1C         pusha
+ 0000021E  BB 000F0225 R     1C         mov ebx, offset ??0004 + 0F0000h
+ 00000223  EB 0A	     1C         jmp ??0002
+ 00000225		     1C ??0004:
+ 00000225  7C 20 45 52 52    1C         db "| ERROR |", 0
+	   4F 52 20 7C 00
+ 0000022F  2E: 8A 03	     1C ??0002:  mov al, byte ptr cs:[ebx]
+ 00000232  84 C0	     1C         test al, al
+ 00000234  74 09	     1C         je ??0003
+ 00000236  E8 00000A35	     1C         call putchar
+ 0000023B  66| 43	     1C         inc bx
+ 0000023D  EB F0	     1C         jmp ??0002
+ 0000023F		     1C ??0003:
+ 0000023F  61		     1C         popa
+ 00000240  EB DB	      C 
+ 00000242		      C 
+			      C 
+				        include keyboard_mapping.asm
+			      C mapping macro scancode, symbol
+			      C local next       cmp al, scancode
+			      C        jne next
+			      C        mov ah, symbol
+			      C        jmp convert_exit
+			      C next:
+			      C endm
+			      C 
+			      C mapping_command macro scancode, command
+			      C local next       cmp al, scancode
+			      C        jne next
+			      C        call command
+			      C        jmp convert_exit
+			      C next:
+			      C endm
+			      C 
+			      C if_key_on macro bit_on, label
+			      C local next       test cx, bit_on
+			      C        jne next
+			      C        jmp label
+			      C next:
+			      C endm
+			      C 
+			      C KEY_Q_DOWN=10h
+			      C KEY_W_DOWN=11h
+			      C KEY_E_DOWN=12h
+ = 00000010		      C KEY_R_DOWN=13h
+ = 00000011		      C KEY_T_DOWN=14h
+ = 00000012		      C KEY_Y_DOWN=15h
+ = 00000013		      C KEY_U_DOWN=16h
+ = 00000014		      C KEY_I_DOWN=17h
+ = 00000015		      C KEY_O_DOWN=18h
+ = 00000016		      C KEY_P_DOWN=19h
+ = 00000017		      C KEY_LBracket_DOWN=1Ah
+ = 00000018		      C KEY_RBracket_DOWN=1Bh
+ = 00000019		      C KEY_A_DOWN=1Eh
+ = 0000001A		      C KEY_S_DOWN=1Fh
+ = 0000001B		      C KEY_D_DOWN=20h
+ = 0000001E		      C KEY_F_DOWN=21h
+ = 0000001F		      C KEY_G_DOWN=22h
+ = 00000020		      C KEY_H_DOWN=23h
+ = 00000021		      C KEY_J_DOWN=24h
+ = 00000022		      C KEY_K_DOWN=25h
+ = 00000023		      C KEY_L_DOWN=26h
+ = 00000024		      C KEY_SemiColon_DOWN=27h
+ = 00000025		      C KEY_Quote_DOWN=028h
+ = 00000026		      C KEY_Space_DOWN=039h
+ = 00000027		      C KEY_Z_DOWN=2Ch
+ = 00000028		      C KEY_X_DOWN=2Dh
+ = 00000039		      C KEY_C_DOWN=2Eh
+ = 0000002C		      C KEY_V_DOWN=2Fh
+ = 0000002D		      C KEY_B_DOWN=30h
+ = 0000002E		      C KEY_N_DOWN=31h
+ = 0000002F		      C KEY_M_DOWN=32h
+ = 00000030		      C KEY_Comma_DOWN=33h
+ = 00000031		      C KEY_Period_DOWN=34h
+ = 00000032		      C KEY_Slash_DOWN=35h
+ = 00000033		      C KEY_LEFT_SHIFT_DOWN=2Ah
+ = 00000034		      C KEY_LEFT_SHIFT_UP=0AAh
+ = 00000035		      C 
+ = 0000002A		      C KEY_RIGHT_SHIFT_DOWN=36h
+ = 000000AA		      C KEY_RIGHT_SHIFT_UP=0B6h
+			      C 
+ = 00000036		      C KEY_0=0Bh
+ = 000000B6		      C KEY_1=02h
+			      C KEY_2=03h
+ = 0000000B		      C KEY_3=04h
+ = 00000002		      C KEY_4=05h
+ = 00000003		      C KEY_5=06h
+ = 00000004		      C KEY_6=07h
+ = 00000005		      C KEY_7=08h
+ = 00000006		      C KEY_8=09h
+ = 00000007		      C KEY_9=0Ah
+ = 00000008		      C 
+ = 00000009		      C KEY_NUMPAD_0=52h
+ = 0000000A		      C KEY_NUMPAD_1=4fh
+			      C KEY_NUMPAD_2=50h
+ = 00000052		      C KEY_NUMPAD_3=51h
+ = 0000004F		      C KEY_NUMPAD_4=4bh
+ = 00000050		      C KEY_NUMPAD_5=4ch
+ = 00000051		      C KEY_NUMPAD_6=4dh
+ = 0000004B		      C KEY_NUMPAD_7=47h
+ = 0000004C		      C KEY_NUMPAD_8=48h
+ = 0000004D		      C KEY_NUMPAD_9=49h
+ = 00000047		      C KEY_TAB=0Fh
+ = 00000048		      C KEY_BACKSPACE=0Eh
+ = 00000049		      C KEY_ENTER=1Ch
+ = 0000000F		      C KEY_SHIFT_ON         =00000001b
+ = 0000000E		      C KEY_SHIFT_OFF        =11111110b
+ = 0000001C		      C KEY_CAPSLOCK_ON      =00000010b
+ = 00000001		      C KEY_CAPSLOCK_OFF     =11111101b
+ = 000000FE		      C KEY_SHIFT_AND_CAPS_ON=00000011b
+ = 00000002		      C 
+ = 000000FD		      C KEY_CAPSLOCK_DOWN=3Ah
+ = 00000003		      C 
+			      C shift_on proc near
+ = 0000003A		      C        push cx
+			      C        or cx, KEY_SHIFT_ON
+ 00000242		      C        mov word ptr ds:[KB_BUTTON_FLAG], cx
+ 00000242  66| 51	      C        pop cx
+ 00000244  66| 83 C9 01	      C        ret
+ 00000248  66| 89 0D	      C shift_on endp
+	   00000452
+ 0000024F  66| 59	      C 
+ 00000251  C3		      C shift_off proc near
+ 00000252		      C        push cx
+			      C        and cx, KEY_SHIFT_OFF
+ 00000252		      C        mov word ptr ds:[KB_BUTTON_FLAG], cx
+ 00000252  66| 51	      C        pop cx
+ 00000254  66| 81 E1 00FE     C        ret
+ 00000259  66| 89 0D	      C shift_off endp
+	   00000452
+ 00000260  66| 59	      C 
+ 00000262  C3		      C capslock_on proc near
+ 00000263		      C        push cx
+			      C        or cx, KEY_CAPSLOCK_ON
+ 00000263		      C        mov word ptr ds:[KB_BUTTON_FLAG], cx
+ 00000263  66| 51	      C        pop cx
+ 00000265  66| 83 C9 02	      C        ret
+ 00000269  66| 89 0D	      C capslock_on endp
+	   00000452
+ 00000270  66| 59	      C 
+ 00000272  C3		      C capslock_off proc near
+ 00000273		      C        push cx
+			      C        and cx, KEY_CAPSLOCK_OFF
+ 00000273		      C        mov word ptr ds:[KB_BUTTON_FLAG], cx
+ 00000273  66| 51	      C        pop cx
+ 00000275  66| 81 E1 00FD     C        ret
+ 0000027A  66| 89 0D	      C capslock_off endp
+	   00000452
+ 00000281  66| 59	      C 
+ 00000283  C3		      C key_tab_func proc near
+ 00000284		      C        PutString "    "
+			      C        ret
+ 00000284		      C key_tab_func endp
+			      C 
+ 00000284  60		     1C         pusha
+ 00000285  BB 000F028C R     1C         mov ebx, offset ??0007 + 0F0000h
+ 0000028A  EB 05	     1C         jmp ??0005
+ 0000028C		     1C ??0007:
+ 0000028C  20 20 20 20 00    1C         db "    ", 0
+ 00000291  2E: 8A 03	     1C ??0005:  mov al, byte ptr cs:[ebx]
+ 00000294  84 C0	     1C         test al, al
+ 00000296  74 09	     1C         je ??0006
+ 00000298  E8 000009D3	     1C         call putchar
+ 0000029D  66| 43	     1C         inc bx
+ 0000029F  EB F0	     1C         jmp ??0005
+ 000002A1		     1C ??0006:
+ 000002A1  61		     1C         popa
+ 000002A2  C3		      C key_backspace_func proc near
+ 000002A3		      C        push ebx
+			      C 
+ 000002A3		      C        mov bx, word ptr ds:[VM_POS]
+ 000002A3  53		      C        test bx, bx
+			      C        jnz @f
+ 000002A4  66| 8B 1D	      C        mov bx, VM_SIZE
+	   00000060
+ 000002AB  66| 85 DB	      C @@:
+ 000002AE  75 04	      C        lea ebx, [ebx-2]
+ 000002B0  66| BB 0FA0	      C        mov word ptr ds:[VM_POS], bx
+ 000002B4		      C        mov byte ptr gs:[ebx], ' '
+ 000002B4  8D 5B FE	      C 
+ 000002B7  66| 89 1D	      C        call updatecursor
+	   00000060
+ 000002BE  65: C6 03 20	      C        pop ebx
+			      C        ret
+ 000002C2  E8 00000969	      C key_backspace_func endp
+ 000002C7  5B		      C 
+ 000002C8  C3		      C key_enter_func proc near
+ 000002C9		      C        NEWLINE
+			      C        ret
+ 000002C9		      C key_enter_func endp
+			      C 
+ 000002C9  66| 50	     1C         push ax
+ 000002CB  66| 53	     1C         push bx
+ 000002CD  66| A1	     1C         mov ax, ds:[VM_POS]
+	   00000060
+ 000002D3  B3 A0	     1C         mov bl, 160
+ 000002D5  F6 F3	     1C         div bl
+ 000002D7  F6 E3	     1C         mul bl
+ 000002D9  66| 05 00A0	     1C         add ax, 160
+ 000002DD  66| 3D 0FA0	     1C         cmp ax, VM_SIZE
+ 000002E1  7E 03	     1C         jle ??0008
+ 000002E3  66| 33 C0	     1C         xor ax, ax
+ 000002E6  66| A3	     1C ??0008:      mov ds:[VM_POS], ax
+	   00000060
+ 000002EC  E8 0000093F	     1C         call updatecursor
+ 000002F1  66| 5B	     1C         pop bx
+ 000002F3  66| 58	     1C         pop ax
+ 000002F5  C3		      C 
+ 000002F6		      C convert proc near
+			      C        push cx
+			      C        mov ah, 0FFh
+ 000002F6		      C        mov cx, word ptr ds:[KB_BUTTON_FLAG]
+ 000002F6  66| 51	      C 
+ 000002F8  B4 FF	      C 
+ 000002FA  66| 8B 0D	      C        mapping_command KEY_LEFT_SHIFT_DOWN, shift_on
+	   00000452
+			      C        mapping_command KEY_LEFT_SHIFT_UP,   shift_off
+			      C        mapping_command KEY_RIGHT_SHIFT_DOWN, shift_on
+			      C        mapping_command KEY_RIGHT_SHIFT_UP,   shift_off
+ 00000301  3C 2A	     1C        cmp al, KEY_LEFT_SHIFT_DOWN
+ 00000303  75 0A	     1C        jne ??0009
+ 00000305  E8 FFFFFF38	     1C        call shift_on
+ 0000030A  E9 00000423	     1C        jmp convert_exit
+ 0000030F		     1C ??0009:
+			      C        
+ 0000030F  3C AA	     1C        cmp al, KEY_LEFT_SHIFT_UP
+ 00000311  75 0A	     1C        jne ??000A
+ 00000313  E8 FFFFFF3A	     1C        call shift_off
+ 00000318  E9 00000415	     1C        jmp convert_exit
+ 0000031D		     1C ??000A:
+			      C        mapping_command KEY_ENTER, key_enter_func
+ 0000031D  3C 36	     1C        cmp al, KEY_RIGHT_SHIFT_DOWN
+ 0000031F  75 0A	     1C        jne ??000B
+ 00000321  E8 FFFFFF1C	     1C        call shift_on
+ 00000326  E9 00000407	     1C        jmp convert_exit
+ 0000032B		     1C ??000B:
+			      C        mapping_command KEY_TAB, key_tab_func
+ 0000032B  3C B6	     1C        cmp al, KEY_RIGHT_SHIFT_UP
+ 0000032D  75 0A	     1C        jne ??000C
+ 0000032F  E8 FFFFFF1E	     1C        call shift_off
+ 00000334  E9 000003F9	     1C        jmp convert_exit
+ 00000339		     1C ??000C:
+			      C        mapping_command KEY_BACKSPACE, key_backspace_func
+			      C 
+ 00000339  3C 1C	     1C        cmp al, KEY_ENTER
+ 0000033B  75 0A	     1C        jne ??000D
+ 0000033D  E8 FFFFFF87	     1C        call key_enter_func
+ 00000342  E9 000003EB	     1C        jmp convert_exit
+ 00000347		     1C ??000D:
+			      C        mapping KEY_NUMPAD_0, '0'
+ 00000347  3C 0F	     1C        cmp al, KEY_TAB
+ 00000349  75 0A	     1C        jne ??000E
+ 0000034B  E8 FFFFFF34	     1C        call key_tab_func
+ 00000350  E9 000003DD	     1C        jmp convert_exit
+ 00000355		     1C ??000E:
+			      C        mapping KEY_NUMPAD_1, '1'
+ 00000355  3C 0E	     1C        cmp al, KEY_BACKSPACE
+ 00000357  75 0A	     1C        jne ??000F
+ 00000359  E8 FFFFFF45	     1C        call key_backspace_func
+ 0000035E  E9 000003CF	     1C        jmp convert_exit
+ 00000363		     1C ??000F:
+			      C        mapping KEY_NUMPAD_2, '2'
+			      C        mapping KEY_NUMPAD_3, '3'
+ 00000363  3C 52	     1C        cmp al, KEY_NUMPAD_0
+ 00000365  75 07	     1C        jne ??0010
+ 00000367  B4 30	     1C        mov ah, '0'
+ 00000369  E9 000003C4	     1C        jmp convert_exit
+ 0000036E		     1C ??0010:
+			      C        mapping KEY_NUMPAD_4, '4'
+ 0000036E  3C 4F	     1C        cmp al, KEY_NUMPAD_1
+ 00000370  75 07	     1C        jne ??0011
+ 00000372  B4 31	     1C        mov ah, '1'
+ 00000374  E9 000003B9	     1C        jmp convert_exit
+ 00000379		     1C ??0011:
+			      C        mapping KEY_NUMPAD_5, '5'
+ 00000379  3C 50	     1C        cmp al, KEY_NUMPAD_2
+ 0000037B  75 07	     1C        jne ??0012
+ 0000037D  B4 32	     1C        mov ah, '2'
+ 0000037F  E9 000003AE	     1C        jmp convert_exit
+ 00000384		     1C ??0012:
+			      C        mapping KEY_NUMPAD_6, '6'
+ 00000384  3C 51	     1C        cmp al, KEY_NUMPAD_3
+ 00000386  75 07	     1C        jne ??0013
+ 00000388  B4 33	     1C        mov ah, '3'
+ 0000038A  E9 000003A3	     1C        jmp convert_exit
+ 0000038F		     1C ??0013:
+			      C        mapping KEY_NUMPAD_7, '7'
+ 0000038F  3C 4B	     1C        cmp al, KEY_NUMPAD_4
+ 00000391  75 07	     1C        jne ??0014
+ 00000393  B4 34	     1C        mov ah, '4'
+ 00000395  E9 00000398	     1C        jmp convert_exit
+ 0000039A		     1C ??0014:
+			      C        mapping KEY_NUMPAD_8, '8'
+ 0000039A  3C 4C	     1C        cmp al, KEY_NUMPAD_5
+ 0000039C  75 07	     1C        jne ??0015
+ 0000039E  B4 35	     1C        mov ah, '5'
+ 000003A0  E9 0000038D	     1C        jmp convert_exit
+ 000003A5		     1C ??0015:
+			      C        mapping KEY_NUMPAD_9, '9'
+ 000003A5  3C 4D	     1C        cmp al, KEY_NUMPAD_6
+ 000003A7  75 07	     1C        jne ??0016
+ 000003A9  B4 36	     1C        mov ah, '6'
+ 000003AB  E9 00000382	     1C        jmp convert_exit
+ 000003B0		     1C ??0016:
+			      C        mapping KEY_0, '0'
+ 000003B0  3C 47	     1C        cmp al, KEY_NUMPAD_7
+ 000003B2  75 07	     1C        jne ??0017
+ 000003B4  B4 37	     1C        mov ah, '7'
+ 000003B6  E9 00000377	     1C        jmp convert_exit
+ 000003BB		     1C ??0017:
+			      C        mapping KEY_1, '1'
+ 000003BB  3C 48	     1C        cmp al, KEY_NUMPAD_8
+ 000003BD  75 07	     1C        jne ??0018
+ 000003BF  B4 38	     1C        mov ah, '8'
+ 000003C1  E9 0000036C	     1C        jmp convert_exit
+ 000003C6		     1C ??0018:
+			      C        mapping KEY_2, '2'
+ 000003C6  3C 49	     1C        cmp al, KEY_NUMPAD_9
+ 000003C8  75 07	     1C        jne ??0019
+ 000003CA  B4 39	     1C        mov ah, '9'
+ 000003CC  E9 00000361	     1C        jmp convert_exit
+ 000003D1		     1C ??0019:
+			      C        mapping KEY_3, '3'
+ 000003D1  3C 0B	     1C        cmp al, KEY_0
+ 000003D3  75 07	     1C        jne ??001A
+ 000003D5  B4 30	     1C        mov ah, '0'
+ 000003D7  E9 00000356	     1C        jmp convert_exit
+ 000003DC		     1C ??001A:
+			      C        mapping KEY_4, '4'
+ 000003DC  3C 02	     1C        cmp al, KEY_1
+ 000003DE  75 07	     1C        jne ??001B
+ 000003E0  B4 31	     1C        mov ah, '1'
+ 000003E2  E9 0000034B	     1C        jmp convert_exit
+ 000003E7		     1C ??001B:
+			      C        mapping KEY_5, '5'
+ 000003E7  3C 03	     1C        cmp al, KEY_2
+ 000003E9  75 07	     1C        jne ??001C
+ 000003EB  B4 32	     1C        mov ah, '2'
+ 000003ED  E9 00000340	     1C        jmp convert_exit
+ 000003F2		     1C ??001C:
+			      C        mapping KEY_6, '6'
+ 000003F2  3C 04	     1C        cmp al, KEY_3
+ 000003F4  75 07	     1C        jne ??001D
+ 000003F6  B4 33	     1C        mov ah, '3'
+ 000003F8  E9 00000335	     1C        jmp convert_exit
+ 000003FD		     1C ??001D:
+			      C        mapping KEY_7, '7'
+ 000003FD  3C 05	     1C        cmp al, KEY_4
+ 000003FF  75 07	     1C        jne ??001E
+ 00000401  B4 34	     1C        mov ah, '4'
+ 00000403  E9 0000032A	     1C        jmp convert_exit
+ 00000408		     1C ??001E:
+			      C        mapping KEY_8, '8'
+ 00000408  3C 06	     1C        cmp al, KEY_5
+ 0000040A  75 07	     1C        jne ??001F
+ 0000040C  B4 35	     1C        mov ah, '5'
+ 0000040E  E9 0000031F	     1C        jmp convert_exit
+ 00000413		     1C ??001F:
+			      C        mapping KEY_9, '9'
+ 00000413  3C 07	     1C        cmp al, KEY_6
+ 00000415  75 07	     1C        jne ??0020
+ 00000417  B4 36	     1C        mov ah, '6'
+ 00000419  E9 00000314	     1C        jmp convert_exit
+ 0000041E		     1C ??0020:
+			      C        
+ 0000041E  3C 08	     1C        cmp al, KEY_7
+ 00000420  75 07	     1C        jne ??0021
+ 00000422  B4 37	     1C        mov ah, '7'
+ 00000424  E9 00000309	     1C        jmp convert_exit
+ 00000429		     1C ??0021:
+			      C        
+ 00000429  3C 09	     1C        cmp al, KEY_8
+ 0000042B  75 07	     1C        jne ??0022
+ 0000042D  B4 38	     1C        mov ah, '8'
+ 0000042F  E9 000002FE	     1C        jmp convert_exit
+ 00000434		     1C ??0022:
+			      C        mapping KEY_Space_DOWN, ' '
+ 00000434  3C 0A	     1C        cmp al, KEY_9
+ 00000436  75 07	     1C        jne ??0023
+ 00000438  B4 39	     1C        mov ah, '9'
+ 0000043A  E9 000002F3	     1C        jmp convert_exit
+ 0000043F		     1C ??0023:
+			      C        if_key_on KEY_SHIFT_AND_CAPS_ON, convert_shift_up
+			      C        if_key_on KEY_SHIFT_ON,    convert_shitf_down
+			      C        if_key_on KEY_CAPSLOCK_ON, convert_shitf_down
+ 0000043F  3C 39	     1C        cmp al, KEY_Space_DOWN
+ 00000441  75 07	     1C        jne ??0024
+ 00000443  B4 20	     1C        mov ah, ' '
+ 00000445  E9 000002E8	     1C        jmp convert_exit
+ 0000044A		     1C ??0024:
+			      C convert_shift_up:
+ 0000044A  66| F7 C1 0003    1C        test cx, KEY_SHIFT_AND_CAPS_ON
+ 0000044F  75 02	     1C        jne ??0025
+ 00000451  EB 18	     1C        jmp convert_shift_up
+ 00000453		     1C ??0025:
+			      C        mapping_command KEY_CAPSLOCK_DOWN, capslock_on
+ 00000453  66| F7 C1 0001    1C        test cx, KEY_SHIFT_ON
+ 00000458  75 05	     1C        jne ??0026
+ 0000045A  E9 0000018A	     1C        jmp convert_shitf_down
+ 0000045F		     1C ??0026:
+			      C        mapping KEY_Q_DOWN, 'q'
+ 0000045F  66| F7 C1 0002    1C        test cx, KEY_CAPSLOCK_ON
+ 00000464  75 05	     1C        jne ??0027
+ 00000466  E9 0000017E	     1C        jmp convert_shitf_down
+ 0000046B		     1C ??0027:
+ 0000046B		      C        mapping KEY_W_DOWN, 'w'
+			      C        mapping KEY_E_DOWN, 'e'
+ 0000046B  3C 3A	     1C        cmp al, KEY_CAPSLOCK_DOWN
+ 0000046D  75 0A	     1C        jne ??0028
+ 0000046F  E8 FFFFFDEF	     1C        call capslock_on
+ 00000474  E9 000002B9	     1C        jmp convert_exit
+ 00000479		     1C ??0028:
+			      C        mapping KEY_R_DOWN, 'r'
+ 00000479  3C 10	     1C        cmp al, KEY_Q_DOWN
+ 0000047B  75 07	     1C        jne ??0029
+ 0000047D  B4 71	     1C        mov ah, 'q'
+ 0000047F  E9 000002AE	     1C        jmp convert_exit
+ 00000484		     1C ??0029:
+			      C        mapping KEY_T_DOWN, 't'
+ 00000484  3C 11	     1C        cmp al, KEY_W_DOWN
+ 00000486  75 07	     1C        jne ??002A
+ 00000488  B4 77	     1C        mov ah, 'w'
+ 0000048A  E9 000002A3	     1C        jmp convert_exit
+ 0000048F		     1C ??002A:
+			      C        mapping KEY_Y_DOWN, 'y'
+ 0000048F  3C 12	     1C        cmp al, KEY_E_DOWN
+ 00000491  75 07	     1C        jne ??002B
+ 00000493  B4 65	     1C        mov ah, 'e'
+ 00000495  E9 00000298	     1C        jmp convert_exit
+ 0000049A		     1C ??002B:
+			      C        mapping KEY_U_DOWN, 'u'
+ 0000049A  3C 13	     1C        cmp al, KEY_R_DOWN
+ 0000049C  75 07	     1C        jne ??002C
+ 0000049E  B4 72	     1C        mov ah, 'r'
+ 000004A0  E9 0000028D	     1C        jmp convert_exit
+ 000004A5		     1C ??002C:
+			      C        mapping KEY_I_DOWN, 'i'
+ 000004A5  3C 14	     1C        cmp al, KEY_T_DOWN
+ 000004A7  75 07	     1C        jne ??002D
+ 000004A9  B4 74	     1C        mov ah, 't'
+ 000004AB  E9 00000282	     1C        jmp convert_exit
+ 000004B0		     1C ??002D:
+			      C        mapping KEY_O_DOWN, 'o'
+ 000004B0  3C 15	     1C        cmp al, KEY_Y_DOWN
+ 000004B2  75 07	     1C        jne ??002E
+ 000004B4  B4 79	     1C        mov ah, 'y'
+ 000004B6  E9 00000277	     1C        jmp convert_exit
+ 000004BB		     1C ??002E:
+			      C        mapping KEY_P_DOWN, 'p'
+ 000004BB  3C 16	     1C        cmp al, KEY_U_DOWN
+ 000004BD  75 07	     1C        jne ??002F
+ 000004BF  B4 75	     1C        mov ah, 'u'
+ 000004C1  E9 0000026C	     1C        jmp convert_exit
+ 000004C6		     1C ??002F:
+			      C        mapping KEY_A_DOWN, 'a'
+ 000004C6  3C 17	     1C        cmp al, KEY_I_DOWN
+ 000004C8  75 07	     1C        jne ??0030
+ 000004CA  B4 69	     1C        mov ah, 'i'
+ 000004CC  E9 00000261	     1C        jmp convert_exit
+ 000004D1		     1C ??0030:
+			      C        mapping KEY_S_DOWN, 's'
+ 000004D1  3C 18	     1C        cmp al, KEY_O_DOWN
+ 000004D3  75 07	     1C        jne ??0031
+ 000004D5  B4 6F	     1C        mov ah, 'o'
+ 000004D7  E9 00000256	     1C        jmp convert_exit
+ 000004DC		     1C ??0031:
+			      C        mapping KEY_D_DOWN, 'd'
+ 000004DC  3C 19	     1C        cmp al, KEY_P_DOWN
+ 000004DE  75 07	     1C        jne ??0032
+ 000004E0  B4 70	     1C        mov ah, 'p'
+ 000004E2  E9 0000024B	     1C        jmp convert_exit
+ 000004E7		     1C ??0032:
+			      C        mapping KEY_F_DOWN, 'f'
+ 000004E7  3C 1E	     1C        cmp al, KEY_A_DOWN
+ 000004E9  75 07	     1C        jne ??0033
+ 000004EB  B4 61	     1C        mov ah, 'a'
+ 000004ED  E9 00000240	     1C        jmp convert_exit
+ 000004F2		     1C ??0033:
+			      C        mapping KEY_G_DOWN, 'g'
+ 000004F2  3C 1F	     1C        cmp al, KEY_S_DOWN
+ 000004F4  75 07	     1C        jne ??0034
+ 000004F6  B4 73	     1C        mov ah, 's'
+ 000004F8  E9 00000235	     1C        jmp convert_exit
+ 000004FD		     1C ??0034:
+			      C        mapping KEY_H_DOWN, 'h'
+ 000004FD  3C 20	     1C        cmp al, KEY_D_DOWN
+ 000004FF  75 07	     1C        jne ??0035
+ 00000501  B4 64	     1C        mov ah, 'd'
+ 00000503  E9 0000022A	     1C        jmp convert_exit
+ 00000508		     1C ??0035:
+			      C        mapping KEY_J_DOWN, 'j'
+ 00000508  3C 21	     1C        cmp al, KEY_F_DOWN
+ 0000050A  75 07	     1C        jne ??0036
+ 0000050C  B4 66	     1C        mov ah, 'f'
+ 0000050E  E9 0000021F	     1C        jmp convert_exit
+ 00000513		     1C ??0036:
+			      C        mapping KEY_K_DOWN, 'k'
+ 00000513  3C 22	     1C        cmp al, KEY_G_DOWN
+ 00000515  75 07	     1C        jne ??0037
+ 00000517  B4 67	     1C        mov ah, 'g'
+ 00000519  E9 00000214	     1C        jmp convert_exit
+ 0000051E		     1C ??0037:
+			      C        mapping KEY_L_DOWN, 'l'
+ 0000051E  3C 23	     1C        cmp al, KEY_H_DOWN
+ 00000520  75 07	     1C        jne ??0038
+ 00000522  B4 68	     1C        mov ah, 'h'
+ 00000524  E9 00000209	     1C        jmp convert_exit
+ 00000529		     1C ??0038:
+			      C        mapping KEY_Z_DOWN, 'z'
+ 00000529  3C 24	     1C        cmp al, KEY_J_DOWN
+ 0000052B  75 07	     1C        jne ??0039
+ 0000052D  B4 6A	     1C        mov ah, 'j'
+ 0000052F  E9 000001FE	     1C        jmp convert_exit
+ 00000534		     1C ??0039:
+			      C        mapping KEY_X_DOWN, 'x'
+ 00000534  3C 25	     1C        cmp al, KEY_K_DOWN
+ 00000536  75 07	     1C        jne ??003A
+ 00000538  B4 6B	     1C        mov ah, 'k'
+ 0000053A  E9 000001F3	     1C        jmp convert_exit
+ 0000053F		     1C ??003A:
+			      C        mapping KEY_C_DOWN, 'c'
+ 0000053F  3C 26	     1C        cmp al, KEY_L_DOWN
+ 00000541  75 07	     1C        jne ??003B
+ 00000543  B4 6C	     1C        mov ah, 'l'
+ 00000545  E9 000001E8	     1C        jmp convert_exit
+ 0000054A		     1C ??003B:
+			      C        mapping KEY_V_DOWN, 'v'
+ 0000054A  3C 2C	     1C        cmp al, KEY_Z_DOWN
+ 0000054C  75 07	     1C        jne ??003C
+ 0000054E  B4 7A	     1C        mov ah, 'z'
+ 00000550  E9 000001DD	     1C        jmp convert_exit
+ 00000555		     1C ??003C:
+			      C        mapping KEY_B_DOWN, 'b'
+ 00000555  3C 2D	     1C        cmp al, KEY_X_DOWN
+ 00000557  75 07	     1C        jne ??003D
+ 00000559  B4 78	     1C        mov ah, 'x'
+ 0000055B  E9 000001D2	     1C        jmp convert_exit
+ 00000560		     1C ??003D:
+			      C        mapping KEY_N_DOWN, 'n'
+ 00000560  3C 2E	     1C        cmp al, KEY_C_DOWN
+ 00000562  75 07	     1C        jne ??003E
+ 00000564  B4 63	     1C        mov ah, 'c'
+ 00000566  E9 000001C7	     1C        jmp convert_exit
+ 0000056B		     1C ??003E:
+			      C        mapping KEY_M_DOWN, 'm'
+ 0000056B  3C 2F	     1C        cmp al, KEY_V_DOWN
+ 0000056D  75 07	     1C        jne ??003F
+ 0000056F  B4 76	     1C        mov ah, 'v'
+ 00000571  E9 000001BC	     1C        jmp convert_exit
+ 00000576		     1C ??003F:
+			      C        mapping KEY_LBracket_DOWN, '['
+ 00000576  3C 30	     1C        cmp al, KEY_B_DOWN
+ 00000578  75 07	     1C        jne ??0040
+ 0000057A  B4 62	     1C        mov ah, 'b'
+ 0000057C  E9 000001B1	     1C        jmp convert_exit
+ 00000581		     1C ??0040:
+			      C        mapping KEY_RBracket_DOWN, ']'
+ 00000581  3C 31	     1C        cmp al, KEY_N_DOWN
+ 00000583  75 07	     1C        jne ??0041
+ 00000585  B4 6E	     1C        mov ah, 'n'
+ 00000587  E9 000001A6	     1C        jmp convert_exit
+ 0000058C		     1C ??0041:
+			      C        mapping KEY_Comma_DOWN, ','
+ 0000058C  3C 32	     1C        cmp al, KEY_M_DOWN
+ 0000058E  75 07	     1C        jne ??0042
+ 00000590  B4 6D	     1C        mov ah, 'm'
+ 00000592  E9 0000019B	     1C        jmp convert_exit
+ 00000597		     1C ??0042:
+			      C        mapping KEY_Period_DOWN, '.'
+ 00000597  3C 1A	     1C        cmp al, KEY_LBracket_DOWN
+ 00000599  75 07	     1C        jne ??0043
+ 0000059B  B4 5B	     1C        mov ah, '['
+ 0000059D  E9 00000190	     1C        jmp convert_exit
+ 000005A2		     1C ??0043:
+			      C        mapping KEY_Slash_DOWN, '/'
+ 000005A2  3C 1B	     1C        cmp al, KEY_RBracket_DOWN
+ 000005A4  75 07	     1C        jne ??0044
+ 000005A6  B4 5D	     1C        mov ah, ']'
+ 000005A8  E9 00000185	     1C        jmp convert_exit
+ 000005AD		     1C ??0044:
+			      C        mapping KEY_SemiColon_DOWN, ';'
+ 000005AD  3C 33	     1C        cmp al, KEY_Comma_DOWN
+ 000005AF  75 07	     1C        jne ??0045
+ 000005B1  B4 2C	     1C        mov ah, ','
+ 000005B3  E9 0000017A	     1C        jmp convert_exit
+ 000005B8		     1C ??0045:
+			      C        mapping KEY_Quote_DOWN, 027h ; '
+ 000005B8  3C 34	     1C        cmp al, KEY_Period_DOWN
+ 000005BA  75 07	     1C        jne ??0046
+ 000005BC  B4 2E	     1C        mov ah, '.'
+ 000005BE  E9 0000016F	     1C        jmp convert_exit
+ 000005C3		     1C ??0046:
+			      C        jmp convert_exit
+ 000005C3  3C 35	     1C        cmp al, KEY_Slash_DOWN
+ 000005C5  75 07	     1C        jne ??0047
+ 000005C7  B4 2F	     1C        mov ah, '/'
+ 000005C9  E9 00000164	     1C        jmp convert_exit
+ 000005CE		     1C ??0047:
+			      C convert_shitf_down:
+ 000005CE  3C 27	     1C        cmp al, KEY_SemiColon_DOWN
+ 000005D0  75 07	     1C        jne ??0048
+ 000005D2  B4 3B	     1C        mov ah, ';'
+ 000005D4  E9 00000159	     1C        jmp convert_exit
+ 000005D9		     1C ??0048:
+			      C        mapping_command KEY_CAPSLOCK_DOWN, capslock_off
+ 000005D9  3C 28	     1C        cmp al, KEY_Quote_DOWN
+ 000005DB  75 07	     1C        jne ??0049
+ 000005DD  B4 27	     1C        mov ah, 027h
+ 000005DF  E9 0000014E	     1C        jmp convert_exit
+ 000005E4		     1C ??0049:
+ 000005E4  E9 00000149	      C 
+ 000005E9		      C        mapping KEY_Q_DOWN, 'Q'
+			      C        mapping KEY_W_DOWN, 'W'
+ 000005E9  3C 3A	     1C        cmp al, KEY_CAPSLOCK_DOWN
+ 000005EB  75 0A	     1C        jne ??004A
+ 000005ED  E8 FFFFFC81	     1C        call capslock_off
+ 000005F2  E9 0000013B	     1C        jmp convert_exit
+ 000005F7		     1C ??004A:
+			      C        mapping KEY_E_DOWN, 'E'
+			      C        mapping KEY_R_DOWN, 'R'
+ 000005F7  3C 10	     1C        cmp al, KEY_Q_DOWN
+ 000005F9  75 07	     1C        jne ??004B
+ 000005FB  B4 51	     1C        mov ah, 'Q'
+ 000005FD  E9 00000130	     1C        jmp convert_exit
+ 00000602		     1C ??004B:
+			      C        mapping KEY_T_DOWN, 'T'
+ 00000602  3C 11	     1C        cmp al, KEY_W_DOWN
+ 00000604  75 07	     1C        jne ??004C
+ 00000606  B4 57	     1C        mov ah, 'W'
+ 00000608  E9 00000125	     1C        jmp convert_exit
+ 0000060D		     1C ??004C:
+			      C        mapping KEY_Y_DOWN, 'Y'
+ 0000060D  3C 12	     1C        cmp al, KEY_E_DOWN
+ 0000060F  75 07	     1C        jne ??004D
+ 00000611  B4 45	     1C        mov ah, 'E'
+ 00000613  E9 0000011A	     1C        jmp convert_exit
+ 00000618		     1C ??004D:
+			      C        mapping KEY_U_DOWN, 'U'
+ 00000618  3C 13	     1C        cmp al, KEY_R_DOWN
+ 0000061A  75 07	     1C        jne ??004E
+ 0000061C  B4 52	     1C        mov ah, 'R'
+ 0000061E  E9 0000010F	     1C        jmp convert_exit
+ 00000623		     1C ??004E:
+			      C        mapping KEY_I_DOWN, 'I'
+ 00000623  3C 14	     1C        cmp al, KEY_T_DOWN
+ 00000625  75 07	     1C        jne ??004F
+ 00000627  B4 54	     1C        mov ah, 'T'
+ 00000629  E9 00000104	     1C        jmp convert_exit
+ 0000062E		     1C ??004F:
+			      C        mapping KEY_O_DOWN, 'O'
+ 0000062E  3C 15	     1C        cmp al, KEY_Y_DOWN
+ 00000630  75 07	     1C        jne ??0050
+ 00000632  B4 59	     1C        mov ah, 'Y'
+ 00000634  E9 000000F9	     1C        jmp convert_exit
+ 00000639		     1C ??0050:
+			      C        mapping KEY_P_DOWN, 'P'
+ 00000639  3C 16	     1C        cmp al, KEY_U_DOWN
+ 0000063B  75 07	     1C        jne ??0051
+ 0000063D  B4 55	     1C        mov ah, 'U'
+ 0000063F  E9 000000EE	     1C        jmp convert_exit
+ 00000644		     1C ??0051:
+			      C        mapping KEY_A_DOWN, 'A'
+ 00000644  3C 17	     1C        cmp al, KEY_I_DOWN
+ 00000646  75 07	     1C        jne ??0052
+ 00000648  B4 49	     1C        mov ah, 'I'
+ 0000064A  E9 000000E3	     1C        jmp convert_exit
+ 0000064F		     1C ??0052:
+			      C        mapping KEY_S_DOWN, 'S'
+ 0000064F  3C 18	     1C        cmp al, KEY_O_DOWN
+ 00000651  75 07	     1C        jne ??0053
+ 00000653  B4 4F	     1C        mov ah, 'O'
+ 00000655  E9 000000D8	     1C        jmp convert_exit
+ 0000065A		     1C ??0053:
+			      C        mapping KEY_D_DOWN, 'D'
+ 0000065A  3C 19	     1C        cmp al, KEY_P_DOWN
+ 0000065C  75 07	     1C        jne ??0054
+ 0000065E  B4 50	     1C        mov ah, 'P'
+ 00000660  E9 000000CD	     1C        jmp convert_exit
+ 00000665		     1C ??0054:
+			      C        mapping KEY_F_DOWN, 'F'
+ 00000665  3C 1E	     1C        cmp al, KEY_A_DOWN
+ 00000667  75 07	     1C        jne ??0055
+ 00000669  B4 41	     1C        mov ah, 'A'
+ 0000066B  E9 000000C2	     1C        jmp convert_exit
+ 00000670		     1C ??0055:
+			      C        mapping KEY_G_DOWN, 'G'
+ 00000670  3C 1F	     1C        cmp al, KEY_S_DOWN
+ 00000672  75 07	     1C        jne ??0056
+ 00000674  B4 53	     1C        mov ah, 'S'
+ 00000676  E9 000000B7	     1C        jmp convert_exit
+ 0000067B		     1C ??0056:
+			      C        mapping KEY_H_DOWN, 'H'
+ 0000067B  3C 20	     1C        cmp al, KEY_D_DOWN
+ 0000067D  75 07	     1C        jne ??0057
+ 0000067F  B4 44	     1C        mov ah, 'D'
+ 00000681  E9 000000AC	     1C        jmp convert_exit
+ 00000686		     1C ??0057:
+			      C        mapping KEY_J_DOWN, 'J'
+ 00000686  3C 21	     1C        cmp al, KEY_F_DOWN
+ 00000688  75 07	     1C        jne ??0058
+ 0000068A  B4 46	     1C        mov ah, 'F'
+ 0000068C  E9 000000A1	     1C        jmp convert_exit
+ 00000691		     1C ??0058:
+			      C        mapping KEY_K_DOWN, 'K'
+ 00000691  3C 22	     1C        cmp al, KEY_G_DOWN
+ 00000693  75 07	     1C        jne ??0059
+ 00000695  B4 47	     1C        mov ah, 'G'
+ 00000697  E9 00000096	     1C        jmp convert_exit
+ 0000069C		     1C ??0059:
+			      C        mapping KEY_L_DOWN, 'L'
+ 0000069C  3C 23	     1C        cmp al, KEY_H_DOWN
+ 0000069E  75 07	     1C        jne ??005A
+ 000006A0  B4 48	     1C        mov ah, 'H'
+ 000006A2  E9 0000008B	     1C        jmp convert_exit
+ 000006A7		     1C ??005A:
+			      C        mapping KEY_Z_DOWN, 'Z'
+ 000006A7  3C 24	     1C        cmp al, KEY_J_DOWN
+ 000006A9  75 07	     1C        jne ??005B
+ 000006AB  B4 4A	     1C        mov ah, 'J'
+ 000006AD  E9 00000080	     1C        jmp convert_exit
+ 000006B2		     1C ??005B:
+			      C        mapping KEY_X_DOWN, 'X'
+ 000006B2  3C 25	     1C        cmp al, KEY_K_DOWN
+ 000006B4  75 04	     1C        jne ??005C
+ 000006B6  B4 4B	     1C        mov ah, 'K'
+ 000006B8  EB 78	     1C        jmp convert_exit
+ 000006BA		     1C ??005C:
+			      C        mapping KEY_C_DOWN, 'C'
+ 000006BA  3C 26	     1C        cmp al, KEY_L_DOWN
+ 000006BC  75 04	     1C        jne ??005D
+ 000006BE  B4 4C	     1C        mov ah, 'L'
+ 000006C0  EB 70	     1C        jmp convert_exit
+ 000006C2		     1C ??005D:
+			      C        mapping KEY_V_DOWN, 'V'
+ 000006C2  3C 2C	     1C        cmp al, KEY_Z_DOWN
+ 000006C4  75 04	     1C        jne ??005E
+ 000006C6  B4 5A	     1C        mov ah, 'Z'
+ 000006C8  EB 68	     1C        jmp convert_exit
+ 000006CA		     1C ??005E:
+			      C        mapping KEY_B_DOWN, 'B'
+ 000006CA  3C 2D	     1C        cmp al, KEY_X_DOWN
+ 000006CC  75 04	     1C        jne ??005F
+ 000006CE  B4 58	     1C        mov ah, 'X'
+ 000006D0  EB 60	     1C        jmp convert_exit
+ 000006D2		     1C ??005F:
+			      C        mapping KEY_N_DOWN, 'N'
+ 000006D2  3C 2E	     1C        cmp al, KEY_C_DOWN
+ 000006D4  75 04	     1C        jne ??0060
+ 000006D6  B4 43	     1C        mov ah, 'C'
+ 000006D8  EB 58	     1C        jmp convert_exit
+ 000006DA		     1C ??0060:
+			      C        mapping KEY_M_DOWN, 'M'
+ 000006DA  3C 2F	     1C        cmp al, KEY_V_DOWN
+ 000006DC  75 04	     1C        jne ??0061
+ 000006DE  B4 56	     1C        mov ah, 'V'
+ 000006E0  EB 50	     1C        jmp convert_exit
+ 000006E2		     1C ??0061:
+			      C        mapping KEY_LBracket_DOWN, '{'
+ 000006E2  3C 30	     1C        cmp al, KEY_B_DOWN
+ 000006E4  75 04	     1C        jne ??0062
+ 000006E6  B4 42	     1C        mov ah, 'B'
+ 000006E8  EB 48	     1C        jmp convert_exit
+ 000006EA		     1C ??0062:
+			      C        mapping KEY_RBracket_DOWN, '}'
+ 000006EA  3C 31	     1C        cmp al, KEY_N_DOWN
+ 000006EC  75 04	     1C        jne ??0063
+ 000006EE  B4 4E	     1C        mov ah, 'N'
+ 000006F0  EB 40	     1C        jmp convert_exit
+ 000006F2		     1C ??0063:
+			      C        mapping KEY_Comma_DOWN, '<'
+ 000006F2  3C 32	     1C        cmp al, KEY_M_DOWN
+ 000006F4  75 04	     1C        jne ??0064
+ 000006F6  B4 4D	     1C        mov ah, 'M'
+ 000006F8  EB 38	     1C        jmp convert_exit
+ 000006FA		     1C ??0064:
+			      C        mapping KEY_Period_DOWN, '>'
+ 000006FA  3C 1A	     1C        cmp al, KEY_LBracket_DOWN
+ 000006FC  75 04	     1C        jne ??0065
+ 000006FE  B4 7B	     1C        mov ah, '{'
+ 00000700  EB 30	     1C        jmp convert_exit
+ 00000702		     1C ??0065:
+			      C        mapping KEY_Slash_DOWN, '?'
+ 00000702  3C 1B	     1C        cmp al, KEY_RBracket_DOWN
+ 00000704  75 04	     1C        jne ??0066
+ 00000706  B4 7D	     1C        mov ah, '}'
+ 00000708  EB 28	     1C        jmp convert_exit
+ 0000070A		     1C ??0066:
+			      C        mapping KEY_SemiColon_DOWN, ':'
+ 0000070A  3C 33	     1C        cmp al, KEY_Comma_DOWN
+ 0000070C  75 04	     1C        jne ??0067
+ 0000070E  B4 3C	     1C        mov ah, '<'
+ 00000710  EB 20	     1C        jmp convert_exit
+ 00000712		     1C ??0067:
+			      C        mapping KEY_Quote_DOWN, '"'
+ 00000712  3C 34	     1C        cmp al, KEY_Period_DOWN
+ 00000714  75 04	     1C        jne ??0068
+ 00000716  B4 3E	     1C        mov ah, '>'
+ 00000718  EB 18	     1C        jmp convert_exit
+ 0000071A		     1C ??0068:
+			      C 
+ 0000071A  3C 35	     1C        cmp al, KEY_Slash_DOWN
+ 0000071C  75 04	     1C        jne ??0069
+ 0000071E  B4 3F	     1C        mov ah, '?'
+ 00000720  EB 10	     1C        jmp convert_exit
+ 00000722		     1C ??0069:
+			      C convert_exit:
+ 00000722  3C 27	     1C        cmp al, KEY_SemiColon_DOWN
+ 00000724  75 04	     1C        jne ??006A
+ 00000726  B4 3A	     1C        mov ah, ':'
+ 00000728  EB 08	     1C        jmp convert_exit
+ 0000072A		     1C ??006A:
+			      C        pop cx
+ 0000072A  3C 28	     1C        cmp al, KEY_Quote_DOWN
+ 0000072C  75 04	     1C        jne ??006B
+ 0000072E  B4 22	     1C        mov ah, '"'
+ 00000730  EB 00	     1C        jmp convert_exit
+ 00000732		     1C ??006B:
+			      C        ret
+ 00000732		      C convert endp
+ 00000732  66| 59	      C 
+ 00000734  C3		      C 
+ 00000735		      C 
+			      C 
+				        include pic.asm
+ 00000735		      C pic_init proc near
+ 00000735  66| 50	      C         push ax
+			      C         EndOfInterrupt()
+ 00000737  B0 20	     1C         mov al, 020h
+ 00000739  E6 20	     1C         out 020h, al
+			      C 
+ 0000073B  B0 11	      C         mov al, 11h ; ICW 1
+ 0000073D  E6 20	      C         out PIC_C0, al
+ 0000073F  E6 A0	      C         out PIC_C1, al
+			      C 
+ 00000741  B0 20	      C         mov al, 20h ; ICW 2
+ 00000743  E6 21	      C         out PIC_D0, al
+			      C 
+ 00000745  B0 04	      C         mov al, 04h ; ICW 3
+ 00000747  E6 21	      C         out PIC_D0, al
+			      C 
+ 00000749  B0 05	      C         mov al, 05h ; ICW 4
+ 0000074B  E6 21	      C         out PIC_D0, al
+			      C 
+ 0000074D  B0 28	      C         mov al, 28h ; ICW 2
+ 0000074F  E6 A1	      C         out PIC_D1, al
+			      C 
+ 00000751  B0 02	      C         mov al, 02h ; ICW 3
+ 00000753  E6 A1	      C         out PIC_D1, al
+			      C 
+ 00000755  B0 01	      C         mov al, 01h ; ICW 4
+ 00000757  E6 A1	      C         out PIC_D1, al
+			      C 
+ 00000759  B0 B8	      C         mov al, 0B8h ; маска IRQ
+ 0000075B  E6 21	      C         out PIC_D0, al
+			      C 
+ 0000075D  B0 8F	      C         mov al, 08Fh ; маска IRQ
+ 0000075F  E6 A1	      C         out PIC_D1, al
+			      C 
+ 00000761  66| 58	      C         pop ax
+			      C 
+ 00000763  C3		      C         ret
+ 00000764		      C pic_init endp 
+			      C 
+				        include ivt.asm
+			      C handler int08
+ 00000764
+ 00000764  26: FF 05	      C         inc  dword ptr es:[TIMER_VALUE]
+	   00000400
+			      C         EndOfInterrupt()
+ 0000076B  B0 20	     1C         mov al, 020h
+ 0000076D  E6 20	     1C         out 020h, al
+ 0000076F  CF		      C         iretd
+			      C 
+			      C handler int09
+ 00000770
+ 00000770  66| 50	      C         push ax
+ 00000772  66| 53	      C         push bx
+ 00000774  B0 AD	      C         mov al, 0ADh
+ 00000776  E6 64	      C         out 064h, al
+ 00000778  66| 33 C0	      C         xor ax, ax
+			      C 
+ 0000077B  E4 60	      C         in al, 060h
+			      C 
+			      C        ; Обработка
+			      C 
+ 0000077D  E8 00000029	      C         call kb_queue_push
+			      C 
+			      C         EndOfInterrupt()
+ 00000782  B0 20	     1C         mov al, 020h
+ 00000784  E6 20	     1C         out 020h, al
+			      C 
+ 00000786  B0 AE	      C         mov al, 0AEh
+ 00000788  E6 64	      C         out 064h, al
+			      C 
+ 0000078A  66| 5B	      C         pop bx
+ 0000078C  66| 58	      C         pop ax
+			      C 
+ 0000078E  CF		      C         iretd
+			      C 
+				        include kb_buffer.asm
+ 0000078F		      C kb_queue_init proc near
+ 0000078F  66| C7 05	      C         mov word ptr ds:[KB_QUEUE_COUNT], 0
+	   00000404 0000
+ 00000798  66| C7 05	      C         mov word ptr ds:[KB_QUEUE_HEAD],  0
+	   00000406 0000
+ 000007A1  66| C7 05	      C         mov word ptr ds:[KB_QUEUE_TAIL],  0
+	   00000408 0000
+ 000007AA  C3		      C         ret
+ 000007AB		      C kb_queue_init endp
+			      C 
+ 000007AB		      C kb_queue_push proc near ; push al -> queue
+ 000007AB  FA		      C         cli
+ 000007AC  53		      C         push ebx
+			      C 
+ 000007AD  66| 83 3D	      C         cmp word ptr ds:[KB_QUEUE_COUNT], KB_QUEUE_CAP   ; if (CAP == COUNT)
+	   00000404 0F
+			      C         ; обработка ошибки
+ 000007B5  74 2B	      C         je short push_err
+			      C         ; ...
+			      C 
+ 000007B7  66| 8B 1D	      C         mov bx, word ptr ds:[KB_QUEUE_TAIL]
+	   00000408
+ 000007BE  67& 88 87 040A     C         mov byte ptr ds:[KB_QUEUE_DATA + bx], al
+			      C 
+ 000007C3  66| 43	      C         inc bx
+ 000007C5  66| 89 1D	      C         mov word ptr ds:[KB_QUEUE_TAIL], bx
+	   00000408
+			      C 
+ 000007CC  66| 83 FB 0F	      C         cmp bx, KB_QUEUE_CAP
+ 000007D0  75 09	      C         jne  short l1
+ 000007D2  66| C7 05	      C         mov word ptr ds:[KB_QUEUE_TAIL], 0
+	   00000408 0000
+ 000007DB		      C l1:
+ 000007DB  66| FF 05	      C         inc word ptr ds:[KB_QUEUE_COUNT]
+	   00000404
+ 000007E2		      C push_err:
+ 000007E2  5B		      C         pop ebx
+ 000007E3  FB		      C         sti
+ 000007E4  C3		      C         ret
+ 000007E5		      C kb_queue_push endp
+			      C 
+ 000007E5		      C kb_queue_pop proc near ; al <- queue
+ 000007E5  FA		      C         cli
+ 000007E6  53		      C         push ebx
+ 000007E7  B0 FF	      C         mov al, 0FFh
+ 000007E9  33 DB	      C         xor ebx, ebx
+			      C         ; if QueueEmpty ( q ): error "опустошение"
+ 000007EB  66| 83 3D	      C         cmp word ptr ds:[KB_QUEUE_COUNT], 0
+	   00000404 00
+			      C         ; обработка ошибки
+ 000007F3  74 2B	      C         je short pop_err
+			      C 
+ 000007F5  66| 8B 1D	      C         mov bx, word ptr ds:[KB_QUEUE_HEAD]
+	   00000406
+ 000007FC  67& 8A 87 040A     C         mov al, byte ptr ds:[KB_QUEUE_DATA + bx]
+			      C 
+ 00000801  66| 43	      C         inc bx
+ 00000803  66| 89 1D	      C         mov word ptr ds:[KB_QUEUE_HEAD], bx
+	   00000406
+			      C 
+ 0000080A  66| 83 FB 0F	      C         cmp bx, KB_QUEUE_CAP
+ 0000080E  75 09	      C         jne short l2
+			      C 
+ 00000810  66| C7 05	      C         mov word ptr ds:[KB_QUEUE_HEAD], 0
+	   00000406 0000
+ 00000819		      C l2:
+ 00000819  66| FF 0D	      C         dec word ptr ds:[KB_QUEUE_COUNT]
+	   00000404
+ 00000820		      C pop_err:
+ 00000820  5B		      C         pop ebx
+ 00000821  FB		      C         sti
+ 00000822  C3		      C         ret
+			      C 
+ 00000823		      C kb_queue_pop endp
+			      C 
+				        include getchar.asm
+			      C ;; Функция getchar
+			      C ;; Получает символ с клавиатуры.
+			      C ;; Если очередь не пуста, то элемент извлекается из очереди (Максимальное колво элементов в очереди - 16)
+			      C ;; Иначе, выполняется ожидание нажатия клавиши.
+			      C ;; Возращаемое значение помещается в al
+			      C ;; Возращаются как коды нажатия, так и отжатия
+			      C 
+ 00000823		      C getchar proc near
+ 00000823		      C .wait:
+ 00000823  E8 FFFFFFBD	      C         call kb_queue_pop
+ 00000828  E8 FFFFFAC9	      C         call convert
+ 0000082D  80 FC FF	      C         cmp ah, 0FFh; Если FF => буффер пуст Ожидаем символ
+ 00000830  74 03	      C         je .error
+ 00000832  86 E0	      C         xchg ah, al
+ 00000834  C3		      C         ret
+ 00000835		      C .error:
+ 00000835  F4		      C         hlt
+ 00000836  EB EB	      C         jmp .wait
+ 00000838		      C getchar endp
+			      C 
+				        include stop.asm
+ 00000838		      C stop    proc near
+			      C         ClearWindow
+ 00000838  66| 53	     1C         push bx
+ 0000083A  66| 50	     1C         push ax
+ 0000083C  E8 000003E5	     1C         call video_init
+ 00000841  66| BB 0FA0	     1C         mov bx, VM_SIZE
+ 00000845		     1C ??006C:
+ 00000845  67& 65: C6 47     1C         mov byte ptr gs:[bx - 2], ' '
+	   FE 20
+ 0000084B  67& 65: C6 47     1C         mov byte ptr gs:[bx - 1], 05h
+	   FF 05
+ 00000851  66| 4B	     1C         dec bx
+ 00000853  66| 4B	     1C         dec bx
+ 00000855  75 EE	     1C         jnz ??006C
+ 00000857  66| 58	     1C         pop ax
+ 00000859  66| 59	     1C         pop cx
+			      C         PutString "Hello world"
+ 0000085B  60		     1C         pusha
+ 0000085C  BB 000F0863 R     1C         mov ebx, offset ??006F + 0F0000h
+ 00000861  EB 0C	     1C         jmp ??006D
+ 00000863		     1C ??006F:
+ 00000863  48 65 6C 6C 6F    1C         db "Hello world", 0
+	   20 77 6F 72 6C
+	   64 00
+ 0000086F  2E: 8A 03	     1C ??006D:  mov al, byte ptr cs:[ebx]
+ 00000872  84 C0	     1C         test al, al
+ 00000874  74 09	     1C         je ??006E
+ 00000876  E8 000003F5	     1C         call putchar
+ 0000087B  66| 43	     1C         inc bx
+ 0000087D  EB F0	     1C         jmp ??006D
+ 0000087F		     1C ??006E:
+ 0000087F  61		     1C         popa
+			      C         NewLine
+ 00000880  66| 50	     1C         push ax
+ 00000882  66| 53	     1C         push bx
+ 00000884  66| A1	     1C         mov ax, ds:[VM_POS]
+	   00000060
+ 0000088A  B3 A0	     1C         mov bl, 160
+ 0000088C  F6 F3	     1C         div bl
+ 0000088E  F6 E3	     1C         mul bl
+ 00000890  66| 05 00A0	     1C         add ax, 160
+ 00000894  66| 3D 0FA0	     1C         cmp ax, VM_SIZE
+ 00000898  7E 03	     1C         jle ??0070
+ 0000089A  66| 33 C0	     1C         xor ax, ax
+ 0000089D  66| A3	     1C ??0070:      mov ds:[VM_POS], ax
+	   00000060
+ 000008A3  E8 00000388	     1C         call updatecursor
+ 000008A8  66| 5B	     1C         pop bx
+ 000008AA  66| 58	     1C         pop ax
+ 000008AC		      C .while_:
+ 000008AC  E8 FFFFFF72	      C         call getchar
+ 000008B1  E8 000003BA	      C         call putchar
+ 000008B6  EB F4	      C         jmp .while_
+ 000008B8		      C .exit_:
+			      C         ClearWindow
+ 000008B8  66| 53	     1C         push bx
+ 000008BA  66| 50	     1C         push ax
+ 000008BC  E8 00000365	     1C         call video_init
+ 000008C1  66| BB 0FA0	     1C         mov bx, VM_SIZE
+ 000008C5		     1C ??0071:
+ 000008C5  67& 65: C6 47     1C         mov byte ptr gs:[bx - 2], ' '
+	   FE 20
+ 000008CB  67& 65: C6 47     1C         mov byte ptr gs:[bx - 1], 05h
+	   FF 05
+ 000008D1  66| 4B	     1C         dec bx
+ 000008D3  66| 4B	     1C         dec bx
+ 000008D5  75 EE	     1C         jnz ??0071
+ 000008D7  66| 58	     1C         pop ax
+ 000008D9  66| 59	     1C         pop cx
+			      C         PutString "|___|___|___|___|___|___|___|___|___|___|___|___|"
+ 000008DB  60		     1C         pusha
+ 000008DC  BB 000F08E3 R     1C         mov ebx, offset ??0074 + 0F0000h
+ 000008E1  EB 32	     1C         jmp ??0072
+ 000008E3		     1C ??0074:
+ 000008E3  7C 5F 5F 5F 7C    1C         db "|___|___|___|___|___|___|___|___|___|___|___|___|", 0
+	   5F 5F 5F 7C 5F
+	   5F 5F 7C 5F 5F
+	   5F 7C 5F 5F 5F
+	   7C 5F 5F 5F 7C
+	   5F 5F 5F 7C 5F
+	   5F 5F 7C 5F 5F
+	   5F 7C 5F 5F 5F
+	   7C 5F 5F 5F 7C
+	   5F 5F 5F 7C 00
+ 00000915  2E: 8A 03	     1C ??0072:  mov al, byte ptr cs:[ebx]
+ 00000918  84 C0	     1C         test al, al
+ 0000091A  74 09	     1C         je ??0073
+ 0000091C  E8 0000034F	     1C         call putchar
+ 00000921  66| 43	     1C         inc bx
+ 00000923  EB F0	     1C         jmp ??0072
+ 00000925		     1C ??0073:
+ 00000925  61		     1C         popa
+			      C         NewLine
+ 00000926  66| 50	     1C         push ax
+ 00000928  66| 53	     1C         push bx
+ 0000092A  66| A1	     1C         mov ax, ds:[VM_POS]
+	   00000060
+ 00000930  B3 A0	     1C         mov bl, 160
+ 00000932  F6 F3	     1C         div bl
+ 00000934  F6 E3	     1C         mul bl
+ 00000936  66| 05 00A0	     1C         add ax, 160
+ 0000093A  66| 3D 0FA0	     1C         cmp ax, VM_SIZE
+ 0000093E  7E 03	     1C         jle ??0075
+ 00000940  66| 33 C0	     1C         xor ax, ax
+ 00000943  66| A3	     1C ??0075:      mov ds:[VM_POS], ax
+	   00000060
+ 00000949  E8 000002E2	     1C         call updatecursor
+ 0000094E  66| 5B	     1C         pop bx
+ 00000950  66| 58	     1C         pop ax
+			      C         PutString "__|___|___|___|___|___|___|___|___|___|___|___|___"
+ 00000952  60		     1C         pusha
+ 00000953  BB 000F095A R     1C         mov ebx, offset ??0078 + 0F0000h
+ 00000958  EB 33	     1C         jmp ??0076
+ 0000095A		     1C ??0078:
+ 0000095A  5F 5F 7C 5F 5F    1C         db "__|___|___|___|___|___|___|___|___|___|___|___|___", 0
+	   5F 7C 5F 5F 5F
+	   7C 5F 5F 5F 7C
+	   5F 5F 5F 7C 5F
+	   5F 5F 7C 5F 5F
+	   5F 7C 5F 5F 5F
+	   7C 5F 5F 5F 7C
+	   5F 5F 5F 7C 5F
+	   5F 5F 7C 5F 5F
+	   5F 7C 5F 5F 5F
+	   00
+ 0000098D  2E: 8A 03	     1C ??0076:  mov al, byte ptr cs:[ebx]
+ 00000990  84 C0	     1C         test al, al
+ 00000992  74 09	     1C         je ??0077
+ 00000994  E8 000002D7	     1C         call putchar
+ 00000999  66| 43	     1C         inc bx
+ 0000099B  EB F0	     1C         jmp ??0076
+ 0000099D		     1C ??0077:
+ 0000099D  61		     1C         popa
+			      C         NewLine
+ 0000099E  66| 50	     1C         push ax
+ 000009A0  66| 53	     1C         push bx
+ 000009A2  66| A1	     1C         mov ax, ds:[VM_POS]
+	   00000060
+ 000009A8  B3 A0	     1C         mov bl, 160
+ 000009AA  F6 F3	     1C         div bl
+ 000009AC  F6 E3	     1C         mul bl
+ 000009AE  66| 05 00A0	     1C         add ax, 160
+ 000009B2  66| 3D 0FA0	     1C         cmp ax, VM_SIZE
+ 000009B6  7E 03	     1C         jle ??0079
+ 000009B8  66| 33 C0	     1C         xor ax, ax
+ 000009BB  66| A3	     1C ??0079:      mov ds:[VM_POS], ax
+	   00000060
+ 000009C1  E8 0000026A	     1C         call updatecursor
+ 000009C6  66| 5B	     1C         pop bx
+ 000009C8  66| 58	     1C         pop ax
+			      C         PutString "|___|___|___|___|___|___|___|___|___|___|___|___|"
+ 000009CA  60		     1C         pusha
+ 000009CB  BB 000F09D2 R     1C         mov ebx, offset ??007C + 0F0000h
+ 000009D0  EB 32	     1C         jmp ??007A
+ 000009D2		     1C ??007C:
+ 000009D2  7C 5F 5F 5F 7C    1C         db "|___|___|___|___|___|___|___|___|___|___|___|___|", 0
+	   5F 5F 5F 7C 5F
+	   5F 5F 7C 5F 5F
+	   5F 7C 5F 5F 5F
+	   7C 5F 5F 5F 7C
+	   5F 5F 5F 7C 5F
+	   5F 5F 7C 5F 5F
+	   5F 7C 5F 5F 5F
+	   7C 5F 5F 5F 7C
+	   5F 5F 5F 7C 00
+ 00000A04  2E: 8A 03	     1C ??007A:  mov al, byte ptr cs:[ebx]
+ 00000A07  84 C0	     1C         test al, al
+ 00000A09  74 09	     1C         je ??007B
+ 00000A0B  E8 00000260	     1C         call putchar
+ 00000A10  66| 43	     1C         inc bx
+ 00000A12  EB F0	     1C         jmp ??007A
+ 00000A14		     1C ??007B:
+ 00000A14  61		     1C         popa
+			      C         NewLine
+ 00000A15  66| 50	     1C         push ax
+ 00000A17  66| 53	     1C         push bx
+ 00000A19  66| A1	     1C         mov ax, ds:[VM_POS]
+	   00000060
+ 00000A1F  B3 A0	     1C         mov bl, 160
+ 00000A21  F6 F3	     1C         div bl
+ 00000A23  F6 E3	     1C         mul bl
+ 00000A25  66| 05 00A0	     1C         add ax, 160
+ 00000A29  66| 3D 0FA0	     1C         cmp ax, VM_SIZE
+ 00000A2D  7E 03	     1C         jle ??007D
+ 00000A2F  66| 33 C0	     1C         xor ax, ax
+ 00000A32  66| A3	     1C ??007D:      mov ds:[VM_POS], ax
+	   00000060
+ 00000A38  E8 000001F3	     1C         call updatecursor
+ 00000A3D  66| 5B	     1C         pop bx
+ 00000A3F  66| 58	     1C         pop ax
+			      C         PutString "__|___|___|___|_bitsya galavoi suda___|___|___|___"
+ 00000A41  60		     1C         pusha
+ 00000A42  BB 000F0A49 R     1C         mov ebx, offset ??0080 + 0F0000h
+ 00000A47  EB 33	     1C         jmp ??007E
+ 00000A49		     1C ??0080:
+ 00000A49  5F 5F 7C 5F 5F    1C         db "__|___|___|___|_bitsya galavoi suda___|___|___|___", 0
+	   5F 7C 5F 5F 5F
+	   7C 5F 5F 5F 7C
+	   5F 62 69 74 73
+	   79 61 20 67 61
+	   6C 61 76 6F 69
+	   20 73 75 64 61
+	   5F 5F 5F 7C 5F
+	   5F 5F 7C 5F 5F
+	   5F 7C 5F 5F 5F
+	   00
+ 00000A7C  2E: 8A 03	     1C ??007E:  mov al, byte ptr cs:[ebx]
+ 00000A7F  84 C0	     1C         test al, al
+ 00000A81  74 09	     1C         je ??007F
+ 00000A83  E8 000001E8	     1C         call putchar
+ 00000A88  66| 43	     1C         inc bx
+ 00000A8A  EB F0	     1C         jmp ??007E
+ 00000A8C		     1C ??007F:
+ 00000A8C  61		     1C         popa
+			      C         NewLine
+ 00000A8D  66| 50	     1C         push ax
+ 00000A8F  66| 53	     1C         push bx
+ 00000A91  66| A1	     1C         mov ax, ds:[VM_POS]
+	   00000060
+ 00000A97  B3 A0	     1C         mov bl, 160
+ 00000A99  F6 F3	     1C         div bl
+ 00000A9B  F6 E3	     1C         mul bl
+ 00000A9D  66| 05 00A0	     1C         add ax, 160
+ 00000AA1  66| 3D 0FA0	     1C         cmp ax, VM_SIZE
+ 00000AA5  7E 03	     1C         jle ??0081
+ 00000AA7  66| 33 C0	     1C         xor ax, ax
+ 00000AAA  66| A3	     1C ??0081:      mov ds:[VM_POS], ax
+	   00000060
+ 00000AB0  E8 0000017B	     1C         call updatecursor
+ 00000AB5  66| 5B	     1C         pop bx
+ 00000AB7  66| 58	     1C         pop ax
+			      C         PutString "|___|___|___|___|___|___|___|___|___|___|___|___|"
+ 00000AB9  60		     1C         pusha
+ 00000ABA  BB 000F0AC1 R     1C         mov ebx, offset ??0084 + 0F0000h
+ 00000ABF  EB 32	     1C         jmp ??0082
+ 00000AC1		     1C ??0084:
+ 00000AC1  7C 5F 5F 5F 7C    1C         db "|___|___|___|___|___|___|___|___|___|___|___|___|", 0
+	   5F 5F 5F 7C 5F
+	   5F 5F 7C 5F 5F
+	   5F 7C 5F 5F 5F
+	   7C 5F 5F 5F 7C
+	   5F 5F 5F 7C 5F
+	   5F 5F 7C 5F 5F
+	   5F 7C 5F 5F 5F
+	   7C 5F 5F 5F 7C
+	   5F 5F 5F 7C 00
+ 00000AF3  2E: 8A 03	     1C ??0082:  mov al, byte ptr cs:[ebx]
+ 00000AF6  84 C0	     1C         test al, al
+ 00000AF8  74 09	     1C         je ??0083
+ 00000AFA  E8 00000171	     1C         call putchar
+ 00000AFF  66| 43	     1C         inc bx
+ 00000B01  EB F0	     1C         jmp ??0082
+ 00000B03		     1C ??0083:
+ 00000B03  61		     1C         popa
+			      C         NewLine
+ 00000B04  66| 50	     1C         push ax
+ 00000B06  66| 53	     1C         push bx
+ 00000B08  66| A1	     1C         mov ax, ds:[VM_POS]
+	   00000060
+ 00000B0E  B3 A0	     1C         mov bl, 160
+ 00000B10  F6 F3	     1C         div bl
+ 00000B12  F6 E3	     1C         mul bl
+ 00000B14  66| 05 00A0	     1C         add ax, 160
+ 00000B18  66| 3D 0FA0	     1C         cmp ax, VM_SIZE
+ 00000B1C  7E 03	     1C         jle ??0085
+ 00000B1E  66| 33 C0	     1C         xor ax, ax
+ 00000B21  66| A3	     1C ??0085:      mov ds:[VM_POS], ax
+	   00000060
+ 00000B27  E8 00000104	     1C         call updatecursor
+ 00000B2C  66| 5B	     1C         pop bx
+ 00000B2E  66| 58	     1C         pop ax
+			      C         PutString "__|___|___|___|___|___|___|___|___|___|___|___|___"
+ 00000B30  60		     1C         pusha
+ 00000B31  BB 000F0B38 R     1C         mov ebx, offset ??0088 + 0F0000h
+ 00000B36  EB 33	     1C         jmp ??0086
+ 00000B38		     1C ??0088:
+ 00000B38  5F 5F 7C 5F 5F    1C         db "__|___|___|___|___|___|___|___|___|___|___|___|___", 0
+	   5F 7C 5F 5F 5F
+	   7C 5F 5F 5F 7C
+	   5F 5F 5F 7C 5F
+	   5F 5F 7C 5F 5F
+	   5F 7C 5F 5F 5F
+	   7C 5F 5F 5F 7C
+	   5F 5F 5F 7C 5F
+	   5F 5F 7C 5F 5F
+	   5F 7C 5F 5F 5F
+	   00
+ 00000B6B  2E: 8A 03	     1C ??0086:  mov al, byte ptr cs:[ebx]
+ 00000B6E  84 C0	     1C         test al, al
+ 00000B70  74 09	     1C         je ??0087
+ 00000B72  E8 000000F9	     1C         call putchar
+ 00000B77  66| 43	     1C         inc bx
+ 00000B79  EB F0	     1C         jmp ??0086
+ 00000B7B		     1C ??0087:
+ 00000B7B  61		     1C         popa
+			      C         NewLine
+ 00000B7C  66| 50	     1C         push ax
+ 00000B7E  66| 53	     1C         push bx
+ 00000B80  66| A1	     1C         mov ax, ds:[VM_POS]
+	   00000060
+ 00000B86  B3 A0	     1C         mov bl, 160
+ 00000B88  F6 F3	     1C         div bl
+ 00000B8A  F6 E3	     1C         mul bl
+ 00000B8C  66| 05 00A0	     1C         add ax, 160
+ 00000B90  66| 3D 0FA0	     1C         cmp ax, VM_SIZE
+ 00000B94  7E 03	     1C         jle ??0089
+ 00000B96  66| 33 C0	     1C         xor ax, ax
+ 00000B99  66| A3	     1C ??0089:      mov ds:[VM_POS], ax
+	   00000060
+ 00000B9F  E8 0000008C	     1C         call updatecursor
+ 00000BA4  66| 5B	     1C         pop bx
+ 00000BA6  66| 58	     1C         pop ax
+			      C         PutString "|___|___|___|___|___|___|___|___|___|___|___|___|"
+ 00000BA8  60		     1C         pusha
+ 00000BA9  BB 000F0BB0 R     1C         mov ebx, offset ??008C + 0F0000h
+ 00000BAE  EB 32	     1C         jmp ??008A
+ 00000BB0		     1C ??008C:
+ 00000BB0  7C 5F 5F 5F 7C    1C         db "|___|___|___|___|___|___|___|___|___|___|___|___|", 0
+	   5F 5F 5F 7C 5F
+	   5F 5F 7C 5F 5F
+	   5F 7C 5F 5F 5F
+	   7C 5F 5F 5F 7C
+	   5F 5F 5F 7C 5F
+	   5F 5F 7C 5F 5F
+	   5F 7C 5F 5F 5F
+	   7C 5F 5F 5F 7C
+	   5F 5F 5F 7C 00
+ 00000BE2  2E: 8A 03	     1C ??008A:  mov al, byte ptr cs:[ebx]
+ 00000BE5  84 C0	     1C         test al, al
+ 00000BE7  74 09	     1C         je ??008B
+ 00000BE9  E8 00000082	     1C         call putchar
+ 00000BEE  66| 43	     1C         inc bx
+ 00000BF0  EB F0	     1C         jmp ??008A
+ 00000BF2		     1C ??008B:
+ 00000BF2  61		     1C         popa
+			      C         NewLine
+ 00000BF3  66| 50	     1C         push ax
+ 00000BF5  66| 53	     1C         push bx
+ 00000BF7  66| A1	     1C         mov ax, ds:[VM_POS]
+	   00000060
+ 00000BFD  B3 A0	     1C         mov bl, 160
+ 00000BFF  F6 F3	     1C         div bl
+ 00000C01  F6 E3	     1C         mul bl
+ 00000C03  66| 05 00A0	     1C         add ax, 160
+ 00000C07  66| 3D 0FA0	     1C         cmp ax, VM_SIZE
+ 00000C0B  7E 03	     1C         jle ??008D
+ 00000C0D  66| 33 C0	     1C         xor ax, ax
+ 00000C10  66| A3	     1C ??008D:      mov ds:[VM_POS], ax
+	   00000060
+ 00000C16  E8 00000015	     1C         call updatecursor
+ 00000C1B  66| 5B	     1C         pop bx
+ 00000C1D  66| 58	     1C         pop ax
+ 00000C1F  FA		      C         cli
+ 00000C20  F4		      C         hlt
+ 00000C21  E9 FFFFFC92	      C         jmp .exit_
+ 00000C26		      C stop    endp
+			      C 
+				        include video_init.asm
+ 00000C26		      C video_init proc near
+ 00000C26  66| C7 05	      C         mov word ptr ds:[VM_POS], 0
+	   00000060 0000
+ 00000C2F  C3		      C         ret
+ 00000C30		      C video_init endp
+			      C 
+				        include putchar.asm
+ 00000C30		      C updatecursor proc near
+ 00000C30  66| 52	      C        push dx
+ 00000C32  66| 50	      C        push ax
+ 00000C34  66| 53	      C        push bx
+ 00000C36  66| 51	      C        push cx
+ 00000C38  66| 8B 1D	      C        mov bx, ds:[VM_POS]
+	   00000060
+ 00000C3F  66| D1 EB	      C        shr bx, 1
+ 00000C42  66| 8B CB	      C        mov cx, bx              ;store 'position' in CX 
+			      C        ;add cx, 1
+			      C        ;cursor LOW port to vga INDEX register 
+ 00000C45  B0 0F	      C        mov al, 0fh             ;Cursor Location Low Register -- 
+ 00000C47  66| BA 03D4	      C        mov dx, 3d4h            ;VGA port 3D4h 
+ 00000C4B  EE		      C        out dx, al 
+ 00000C4C  66| 8B C1	      C        mov ax, cx              ;restore 'postion' back to AX 
+ 00000C4F  66| BA 03D5	      C        mov dx, 3d5h            ;VGA port 3D5h 
+ 00000C53  EE		      C        out dx, al              ;send to VGA hardware 
+			      C         ;cursor HIGH port to vga INDEX register 
+ 00000C54  B0 0E	      C        mov al, 0eh 
+ 00000C56  66| BA 03D4	      C        mov dx, 3d4h            ;VGA port 3D4h 
+ 00000C5A  EE		      C        out dx, al 
+ 00000C5B  66| 8B C1	      C        mov ax, cx              ;restore 'position' back to AX 
+ 00000C5E  66| C1 E8 08	      C        shr ax, 8               ;get high byte in 'position' 
+ 00000C62  66| BA 03D5	      C        mov dx, 3d5h            ;VGA port 3D5h 
+ 00000C66  EE		      C        out dx, al              ;send to VGA hardware 
+			      C 
+ 00000C67  66| 59	      C        pop cx
+ 00000C69  66| 5B	      C        pop bx
+ 00000C6B  66| 58	      C        pop ax
+ 00000C6D  66| 5A	      C        pop dx
+ 00000C6F  C3		      C        ret
+ 00000C70		      C updatecursor endp
+			      C 
+ 00000C70		      C putchar proc near
+ 00000C70  60		      C         pusha
+			      C 
+ 00000C71  66| 8B 1D	      C         mov bx, ds:[VM_POS] ; Считываем значение указателя
+	   00000060
+ 00000C78  66| 81 FB 0FA0     C         cmp bx, VM_SIZE
+ 00000C7D  7C 03	      C         jl @f
+ 00000C7F  66| 33 DB	      C         xor bx, bx
+ 00000C82		      C @@:
+ 00000C82  67& 65: 88 07      C         mov gs:[bx], al
+ 00000C86  67& 66| 8D 5F      C         lea bx, [bx+2]
+	   02
+ 00000C8B  66| 89 1D	      C         mov ds:[VM_POS], bx
+	   00000060
+ 00000C92  E8 FFFFFF99	      C         call updatecursor
+ 00000C97  61		      C         popa
+ 00000C98  C3		      C         ret
+ 00000C99		      C putchar endp
+			      C 
+ 00000C99 = 00000C99		_TEXT32_END=$ - _TEXT32_BEGIN
+ 0C99				_TEXT32   ends
+
+ 0000				_TEXT   segment byte public 'CODE' use16
+ 0000				assume cs:_TEXT, ds:nothing
+ = 0000				_TEXT_BEGIN=$
+ 0000				start:
+ 0000  FA			        cli
+ 0001  2E: 0F B2 26 0221 R	        lss     SP, dword ptr STKPTR
+ 0007  FB			        sti ; если сотрешь напиши хотя бы nop
+
+ 0008  E8 0155			        call scanbios
+				        ; вот тут !
+ 000B  E8 01B0			        call protected_mode
+
+				        include gdt.asm
+ 000E			      C GDT:
+			      C DESCRIPTOR
+ 000E  0000		     1C                                 dw      _limit MOD 10000h
+ 0010  0000		     1C                                 dw      (_base) MOD 10000h
+ 0012  00		     1C                                 db      (_base/10000h) MOD 0100h
+ 0013  00		     1C                                 db      0
+ 0014  00		     1C                                 db      (_g SHL 7) + (_x SHL 6) + (_l SHL 5) + ((_limit SHR 16) MOD 10h)
+ 0015  00		     1C                                 db      (_base SHR 24) MOD 0100h
+ 0016			      C CS_dsc:	DESCRIPTOR	_limit=0FFFFFFFFh, _base=000000h,	_r=1, _x=1	; код
+ 0016  FFFF		     1C                                 dw      (_limit/4096) MOD 10000h
+ 0018  0000		     1C                                 dw      (_base) MOD 10000h
+ 001A  00		     1C                                 db      (_base/10000h) MOD 0100h
+ 001B  9A		     1C                                 db      (_p SHL 7) + (_dpl SHL 5) + 011000b + (_c SHL 2) + (_r SHL 1) + (_a)
+ 001C  CF		     1C                                 db      10000000b + (_x SHL 6) + (_l SHL 5) + ((_limit SHR 28) MOD 10h)
+ 001D  00		     1C                                 db      (_base SHR 24) MOD 0100h
+ 001E			      C DS_dsc:	DESCRIPTOR	_limit=0FFFFFFFFh, _base=000000h,	_w=1,           ; данные
+ 001E  FFFF		     1C                                 dw      (_limit/4096) MOD 10000h
+ 0020  0000		     1C                                 dw      (_base) MOD 10000h
+ 0022  00		     1C                                 db      (_base/10000h) MOD 0100h
+ 0023  92		     1C                                 db      (_p SHL 7) + (_dpl SHL 5) + 010000b + (_ed SHL 2) + (_w SHL 1) + (_a)
+ 0024  8F		     1C                                 db      10000000b + (_x SHL 6) + (_l SHL 5) + ((_limit SHR 28) MOD 10h)
+ 0025  00		     1C                                 db      (_base SHR 24) MOD 0100h
+ 0026			      C GS_dsc:	DESCRIPTOR	_limit=000008000h, _base=0B8000h,	_w=1, 		; видео
+ 0026  8000		     1C                                 dw      _limit MOD 10000h
+ 0028  8000		     1C                                 dw      (_base) MOD 10000h
+ 002A  0B		     1C                                 db      (_base/10000h) MOD 0100h
+ 002B  92		     1C                                 db      (_p SHL 7) + (_dpl SHL 5) + 010000b + (_ed SHL 2) + (_w SHL 1) + (_a)
+ 002C  00		     1C                                 db      (_g SHL 7) + (_x SHL 6) + (_l SHL 5) + ((_limit SHR 16) MOD 10h)
+ 002D  00		     1C                                 db      (_base SHR 24) MOD 0100h
+ 002E			      C SS_dsc:	DESCRIPTOR      _limit=000000FFFh, _base=09F000h,	_w=1, _x=1	; стек
+ 002E  0FFF		     1C                                 dw      _limit MOD 10000h
+ 0030  F000		     1C                                 dw      (_base) MOD 10000h
+ 0032  09		     1C                                 db      (_base/10000h) MOD 0100h
+ 0033  92		     1C                                 db      (_p SHL 7) + (_dpl SHL 5) + 010000b + (_ed SHL 2) + (_w SHL 1) + (_a)
+ 0034  40		     1C                                 db      (_g SHL 7) + (_x SHL 6) + (_l SHL 5) + ((_limit SHR 16) MOD 10h)
+ 0035  00		     1C                                 db      (_base SHR 24) MOD 0100h
+			      C DESCRIPTOR _base=0F0000h, _r=1, _g=1, _x=0, _limit=0Fh
+ 0036  000F		     1C                                 dw      _limit MOD 10000h
+ 0038  0000		     1C                                 dw      (_base) MOD 10000h
+ 003A  0F		     1C                                 db      (_base/10000h) MOD 0100h
+ 003B  9A		     1C                                 db      (_p SHL 7) + (_dpl SHL 5) + 011000b + (_c SHL 2) + (_r SHL 1) + (_a)
+ 003C  80		     1C                                 db      (_g SHL 7) + (_x SHL 6) + (_l SHL 5) + ((_limit SHR 16) MOD 10h)
+ 003D  00		     1C                                 db      (_base SHR 24) MOD 0100h
+ 003E = 0030		      C GDT_SIZE equ $ - GDT
+ 003E			      C gdtr:
+ 003E  002F		      C dw	GDT_SIZE - 1						; Table Limit
+ 0040  00001000		      C dd	GDT_MEM_POS
+			      C 
+				        include idt.asm
+ 0044			      C IDT:
+			      C        rept 32
+			      C         dd 0, 0
+			      C        endm
+ 0044  00000000 00000000     1C         dd 0, 0
+ 004C  00000000 00000000     1C         dd 0, 0
+ 0054  00000000 00000000     1C         dd 0, 0
+ 005C  00000000 00000000     1C         dd 0, 0
+ 0064  00000000 00000000     1C         dd 0, 0
+ 006C  00000000 00000000     1C         dd 0, 0
+ 0074  00000000 00000000     1C         dd 0, 0
+ 007C  00000000 00000000     1C         dd 0, 0
+ 0084  00000000 00000000     1C         dd 0, 0
+ 008C  00000000 00000000     1C         dd 0, 0
+ 0094  00000000 00000000     1C         dd 0, 0
+ 009C  00000000 00000000     1C         dd 0, 0
+ 00A4  00000000 00000000     1C         dd 0, 0
+ 00AC  00000000 00000000     1C         dd 0, 0
+ 00B4  00000000 00000000     1C         dd 0, 0
+ 00BC  00000000 00000000     1C         dd 0, 0
+ 00C4  00000000 00000000     1C         dd 0, 0
+ 00CC  00000000 00000000     1C         dd 0, 0
+ 00D4  00000000 00000000     1C         dd 0, 0
+ 00DC  00000000 00000000     1C         dd 0, 0
+ 00E4  00000000 00000000     1C         dd 0, 0
+ 00EC  00000000 00000000     1C         dd 0, 0
+ 00F4  00000000 00000000     1C         dd 0, 0
+ 00FC  00000000 00000000     1C         dd 0, 0
+ 0104  00000000 00000000     1C         dd 0, 0
+ 010C  00000000 00000000     1C         dd 0, 0
+ 0114  00000000 00000000     1C         dd 0, 0
+ 011C  00000000 00000000     1C         dd 0, 0
+ 0124  00000000 00000000     1C         dd 0, 0
+ 012C  00000000 00000000     1C         dd 0, 0
+ 0134  00000000 00000000     1C         dd 0, 0
+ 013C  00000000 00000000     1C         dd 0, 0
+			      C        intdescriptor _offset=int08, _selector=8
+ 0144  0764		     1C         dw _offset AND 0FFFFh
+ 0146  0008		     1C         dw _selector
+ 0148  00		     1C         db 0
+ 0149  8E		     1C         db _t+6+(_use32 SHL 3)+(_dpl SHL 5)+(_p SHL 7)
+ 014A  000F		     1C         dw _offset SHR 16
+			      C        intdescriptor _offset=int09, _selector=8
+ 014C  0770		     1C         dw _offset AND 0FFFFh
+ 014E  0008		     1C         dw _selector
+ 0150  00		     1C         db 0
+ 0151  8E		     1C         db _t+6+(_use32 SHL 3)+(_dpl SHL 5)+(_p SHL 7)
+ 0152  000F		     1C         dw _offset SHR 16
+ 0154 03FF		      C RIDTR: dw 3FFh
+ 0156  00000000		      C        dd 0
+			      C 
+ 015A = 0116		      C IDT_SIZE equ $ - IDT
+ 015A			      C idtr:
+ 015A  0115		      C        dw IDT_SIZE - 1
+ 015C  00001500		      C        dd IDT_MEM_POS
+			      C 
+				        include scanbios.asm
+ 0160			      C scanbios proc near
+ 0160  FC		      C         cld
+ 0161  BA C000		      C         mov     dx, 0C000h
+			      C 
+ 0164  8E DA		      C cycle: mov  DS, dx
+ 0166  67& 81 3D 00000000     C   cmp  word ptr DS:[0], 0AA55h
+       AA55
+ 016F  75 42		      C   jnz  short skip
+			      C 
+ 0171  33 F6		      C         xor     si, si
+ 0173  33 C9		      C         xor     cx, cx
+ 0175  67& 8A 2D 00000002     C         mov     ch, DS:[2]
+ 017C  32 DB		      C         xor     bl, bl
+			      C 
+ 017E  AD		      C chcksm: lodsw
+ 017F  02 C4		      C         add     al, ah
+ 0181  02 D8		      C         add     bl, al
+ 0183  49		      C         dec     cx
+ 0184  75 F8		      C         jnz     short chcksm
+ 0186  0A DB		      C         or      bl, bl
+ 0188  75 16		      C         jnz     short skipss
+ 018A  60		      C         pusha
+ 018B  1E		      C         push ds
+ 018C  06		      C         push es
+ 018D  0F A0		      C         push fs
+ 018F  0F A8		      C         push gs
+ 0191  0E		      C         push CS
+ 0192  68 0199 R	      C         push offset __ret
+ 0195  1E		      C         push DS
+ 0196  6A 03		      C         push 3
+ 0198  CB		      C         retf
+ 0199			      C __ret:
+ 0199  0F A9		      C         pop gs
+ 019B  0F A1		      C         pop fs
+ 019D  07		      C         pop es
+ 019E  1F		      C         pop ds
+ 019F  61		      C         popa
+ 01A0			      C skipss:
+ 01A0  67& 0F B6 0D	      C           movzx cx, byte ptr DS:[2]
+       00000002
+ 01A8  80 E9 01		      C           sub  cl, 1
+ 01AB  80 E1 FC		      C           and  cl, 0FCh
+ 01AE  C1 E1 05		      C           shl  cx, 5
+ 01B1  03 D1		      C           add  dx, cx
+ 01B3			      C skip:
+ 01B3  81 C2 0080	      C           add  dx, 080h
+ 01B7  81 FA F000	      C           cmp  dx, 0F000h
+ 01BB  72 A7		      C           jb  cycle
+ 01BD  C3		      C           ret     0
+ 01BE			      C scanbios endp
+			      C 
+				        include protected_mode.asm
+ 01BE			      C protected_mode proc near
+ 01BE  FA		      C         cli ; Запрещаем прерывания
+ 01BF  E8 0058		      C         call nmi_disable; Запрещаем NMI
+ 01C2  E8 004E		      C         call open_A20
+ 01C5  E8 0013		      C         call load_gdt
+ 01C8  E8 002C		      C         call load_idt
+			      C 
+			      C         ; включаем битик cr0
+ 01CB  0F 20 C0		      C         mov eax, cr0
+ 01CE  0C 01		      C         or al, 1
+ 01D0  0F 22 C0		      C         mov cr0, eax
+			      C 
+ 01D3  66		      C         db 066h ; смена разрядности
+ 01D4  EA		      C         db 0EAh
+ 01D5  000F0107 R	      C         dd offset start32 + 0F0000h
+ 01D9  0008		      C         dw 8
+			      C 
+ 01DB			      C protected_mode endp
+			      C 
+ 01DB			      C load_gdt proc near
+			      C         copy GDT, GDT_MEM_POS, GDT_SIZE
+ 01DB  8C C8		     1C        mov ax, cs
+ 01DD  8E D8		     1C        mov ds, ax
+ 01DF  BE 000E R	     1C        mov si, offset GDT
+ 01E2  B8 0100		     1C        mov ax, GDT_MEM_POS/16
+ 01E5  8E C0		     1C        mov es, ax
+ 01E7  33 FF		     1C        xor di, di
+ 01E9  B9 000C		     1C        mov cx, GDT_SIZE/4
+ 01EC  FC		     1C        cld
+ 01ED  F3/ 66| A5	     1C        rep movsd
+ 01F0  2E: 0F 01 16 003E R    C         lgdt fword ptr gdtr
+ 01F6  C3		      C         ret
+ 01F7			      C load_gdt endp
+			      C 
+ 01F7			      C load_idt proc near
+			      C         copy IDT, IDT_MEM_POS, IDT_SIZE
+ 01F7  8C C8		     1C        mov ax, cs
+ 01F9  8E D8		     1C        mov ds, ax
+ 01FB  BE 0044 R	     1C        mov si, offset IDT
+ 01FE  B8 0150		     1C        mov ax, IDT_MEM_POS/16
+ 0201  8E C0		     1C        mov es, ax
+ 0203  33 FF		     1C        xor di, di
+ 0205  B9 0045		     1C        mov cx, IDT_SIZE/4
+ 0208  FC		     1C        cld
+ 0209  F3/ 66| A5	     1C        rep movsd
+ 020C  2E: 0F 01 1E 015A R    C         lidt fword ptr idtr
+ 0212  C3		      C         ret
+ 0213			      C load_idt endp
+			      C 
+ 0213			      C open_A20 proc near
+ 0213  E4 92		      C         in al, SYS_CONTROL_PORT_A
+ 0215  0C 02		      C         or al, 10b ; Bit 1 (rw): 0: disable A20, 1: enable A20.
+ 0217  E6 92		      C         out SYS_CONTROL_PORT_A, al
+ 0219  C3		      C         ret
+ 021A			      C open_A20 endp
+			      C 
+ 021A			      C nmi_disable proc near
+ 021A  E4 70		      C         in al, CMOS_REG
+ 021C  0C 80		      C         or al, 10000000b
+ 021E  E6 70		      C         out CMOS_REG, al
+ 0220  C3		      C         ret
+ 0221			      C nmi_disable endp
+			      C 
+ 0221 FFFE 9000			STKPTR  dw      0FFFEh,09000h
+
+ 0225 C000			BEGSEG	dw	0C000h
+
+
+				; real startup entry begins at F000:FFF0
+				org     0FFF0h - _TEXT32_END
+ F357  EA			        db      0EAh
+ F358  0000 R			        dw      offset start
+ F35A  F0C9			        dw      0F000h + _TEXT32_END_
+
+
+				org     0FFFEh - _TEXT32_END
+ F365  99FC			        dw      99FCh
+
+ F367				_TEXT   ends
+				end     start
+Microsoft (R) Macro Assembler Version 12.00.30723.0	    06/05/17 21:50:11
+src/bios.asm						     Symbols 2 - 1
+
+
+
+
+Macros:
+
+                N a m e                 Type
+
+CMOS_READ_TIME . . . . . . . . .	Proc
+ClearWindow  . . . . . . . . . .	Proc
+EndOfInterrupt . . . . . . . . .	Proc
+KB_GET_TIMEOUT . . . . . . . . .	Proc
+NewLine  . . . . . . . . . . . .	Proc
+PutString  . . . . . . . . . . .	Proc
+copy . . . . . . . . . . . . . .	Proc
+descriptor . . . . . . . . . . .	Proc
+handler  . . . . . . . . . . . .	Proc
+if_key_on  . . . . . . . . . . .	Proc
+intdescriptor  . . . . . . . . .	Proc
+mapping_command  . . . . . . . .	Proc
+mapping  . . . . . . . . . . . .	Proc
+rloop  . . . . . . . . . . . . .	Proc
+
+
+Segments and Groups:
+
+                N a m e                 Size     Length   Align   Combine Class
+
+_TEXT32  . . . . . . . . . . . .	32 Bit	 0C99	  Byte	  Public  'CODE'	
+_TEXT  . . . . . . . . . . . . .	16 Bit	 F367	  Byte	  Public  'CODE'	
+
+
+Procedures, parameters, and locals:
+
+                N a m e                 Type     Value    Attr
+
+capslock_off . . . . . . . . . .	P Near	 0273	  _TEXT32	Length= 0011 Private
+capslock_on  . . . . . . . . . .	P Near	 0263	  _TEXT32	Length= 0010 Private
+convert  . . . . . . . . . . . .	P Near	 02F6	  _TEXT32	Length= 043F Private
+getchar  . . . . . . . . . . . .	P Near	 0823	  _TEXT32	Length= 0015 Private
+kb_queue_init  . . . . . . . . .	P Near	 078F	  _TEXT32	Length= 001C Private
+kb_queue_pop . . . . . . . . . .	P Near	 07E5	  _TEXT32	Length= 003E Private
+kb_queue_push  . . . . . . . . .	P Near	 07AB	  _TEXT32	Length= 003A Private
+key_backspace_func . . . . . . .	P Near	 02A3	  _TEXT32	Length= 0026 Private
+key_enter_func . . . . . . . . .	P Near	 02C9	  _TEXT32	Length= 002D Private
+key_tab_func . . . . . . . . . .	P Near	 0284	  _TEXT32	Length= 001F Private
+keyboard_init  . . . . . . . . .	P Near	 0183	  _TEXT32	Length= 00BF Private
+load_gdt . . . . . . . . . . . .	P Near	 01DB	  _TEXT	Length= 001C Private
+load_idt . . . . . . . . . . . .	P Near	 01F7	  _TEXT	Length= 001C Private
+nmi_disable  . . . . . . . . . .	P Near	 021A	  _TEXT	Length= 0007 Private
+nmi_enable . . . . . . . . . . .	P Near	 0100	  _TEXT32	Length= 0007 Private
+open_A20 . . . . . . . . . . . .	P Near	 0213	  _TEXT	Length= 0007 Private
+pic_init . . . . . . . . . . . .	P Near	 0735	  _TEXT32	Length= 002F Private
+pit_init . . . . . . . . . . . .	P Near	 0148	  _TEXT32	Length= 001C Private
+protected_mode . . . . . . . . .	P Near	 01BE	  _TEXT	Length= 001D Private
+putchar  . . . . . . . . . . . .	P Near	 0C70	  _TEXT32	Length= 0029 Private
+scanbios . . . . . . . . . . . .	P Near	 0160	  _TEXT	Length= 005E Private
+shift_off  . . . . . . . . . . .	P Near	 0252	  _TEXT32	Length= 0011 Private
+shift_on . . . . . . . . . . . .	P Near	 0242	  _TEXT32	Length= 0010 Private
+stop . . . . . . . . . . . . . .	P Near	 0838	  _TEXT32	Length= 03EE Private
+updatecursor . . . . . . . . . .	P Near	 0C30	  _TEXT32	Length= 0040 Private
+video_init . . . . . . . . . . .	P Near	 0C26	  _TEXT32	Length= 000A Private
+
+
+Symbols:
+
+                N a m e                 Type     Value    Attr
+
+.error . . . . . . . . . . . . .	L Near	 0835	  _TEXT32	
+.exit_ . . . . . . . . . . . . .	L Near	 08B8	  _TEXT32	
+.wait  . . . . . . . . . . . . .	L Near	 0823	  _TEXT32	
+.while_  . . . . . . . . . . . .	L Near	 08AC	  _TEXT32	
+??0000 . . . . . . . . . . . . .	L Near	 0191	  _TEXT32	
+??0001 . . . . . . . . . . . . .	L Near	 019D	  _TEXT32	
+??0002 . . . . . . . . . . . . .	L Near	 022F	  _TEXT32	
+??0003 . . . . . . . . . . . . .	L Near	 023F	  _TEXT32	
+??0004 . . . . . . . . . . . . .	L Near	 0225	  _TEXT32	
+??0005 . . . . . . . . . . . . .	L Near	 0291	  _TEXT32	
+??0006 . . . . . . . . . . . . .	L Near	 02A1	  _TEXT32	
+??0007 . . . . . . . . . . . . .	L Near	 028C	  _TEXT32	
+??0008 . . . . . . . . . . . . .	L Near	 02E6	  _TEXT32	
+??0009 . . . . . . . . . . . . .	L Near	 030F	  _TEXT32	
+??000A . . . . . . . . . . . . .	L Near	 031D	  _TEXT32	
+??000B . . . . . . . . . . . . .	L Near	 032B	  _TEXT32	
+??000C . . . . . . . . . . . . .	L Near	 0339	  _TEXT32	
+??000D . . . . . . . . . . . . .	L Near	 0347	  _TEXT32	
+??000E . . . . . . . . . . . . .	L Near	 0355	  _TEXT32	
+??000F . . . . . . . . . . . . .	L Near	 0363	  _TEXT32	
+??0010 . . . . . . . . . . . . .	L Near	 036E	  _TEXT32	
+??0011 . . . . . . . . . . . . .	L Near	 0379	  _TEXT32	
+??0012 . . . . . . . . . . . . .	L Near	 0384	  _TEXT32	
+??0013 . . . . . . . . . . . . .	L Near	 038F	  _TEXT32	
+??0014 . . . . . . . . . . . . .	L Near	 039A	  _TEXT32	
+??0015 . . . . . . . . . . . . .	L Near	 03A5	  _TEXT32	
+??0016 . . . . . . . . . . . . .	L Near	 03B0	  _TEXT32	
+??0017 . . . . . . . . . . . . .	L Near	 03BB	  _TEXT32	
+??0018 . . . . . . . . . . . . .	L Near	 03C6	  _TEXT32	
+??0019 . . . . . . . . . . . . .	L Near	 03D1	  _TEXT32	
+??001A . . . . . . . . . . . . .	L Near	 03DC	  _TEXT32	
+??001B . . . . . . . . . . . . .	L Near	 03E7	  _TEXT32	
+??001C . . . . . . . . . . . . .	L Near	 03F2	  _TEXT32	
+??001D . . . . . . . . . . . . .	L Near	 03FD	  _TEXT32	
+??001E . . . . . . . . . . . . .	L Near	 0408	  _TEXT32	
+??001F . . . . . . . . . . . . .	L Near	 0413	  _TEXT32	
+??0020 . . . . . . . . . . . . .	L Near	 041E	  _TEXT32	
+??0021 . . . . . . . . . . . . .	L Near	 0429	  _TEXT32	
+??0022 . . . . . . . . . . . . .	L Near	 0434	  _TEXT32	
+??0023 . . . . . . . . . . . . .	L Near	 043F	  _TEXT32	
+??0024 . . . . . . . . . . . . .	L Near	 044A	  _TEXT32	
+??0025 . . . . . . . . . . . . .	L Near	 0453	  _TEXT32	
+??0026 . . . . . . . . . . . . .	L Near	 045F	  _TEXT32	
+??0027 . . . . . . . . . . . . .	L Near	 046B	  _TEXT32	
+??0028 . . . . . . . . . . . . .	L Near	 0479	  _TEXT32	
+??0029 . . . . . . . . . . . . .	L Near	 0484	  _TEXT32	
+??002A . . . . . . . . . . . . .	L Near	 048F	  _TEXT32	
+??002B . . . . . . . . . . . . .	L Near	 049A	  _TEXT32	
+??002C . . . . . . . . . . . . .	L Near	 04A5	  _TEXT32	
+??002D . . . . . . . . . . . . .	L Near	 04B0	  _TEXT32	
+??002E . . . . . . . . . . . . .	L Near	 04BB	  _TEXT32	
+??002F . . . . . . . . . . . . .	L Near	 04C6	  _TEXT32	
+??0030 . . . . . . . . . . . . .	L Near	 04D1	  _TEXT32	
+??0031 . . . . . . . . . . . . .	L Near	 04DC	  _TEXT32	
+??0032 . . . . . . . . . . . . .	L Near	 04E7	  _TEXT32	
+??0033 . . . . . . . . . . . . .	L Near	 04F2	  _TEXT32	
+??0034 . . . . . . . . . . . . .	L Near	 04FD	  _TEXT32	
+??0035 . . . . . . . . . . . . .	L Near	 0508	  _TEXT32	
+??0036 . . . . . . . . . . . . .	L Near	 0513	  _TEXT32	
+??0037 . . . . . . . . . . . . .	L Near	 051E	  _TEXT32	
+??0038 . . . . . . . . . . . . .	L Near	 0529	  _TEXT32	
+??0039 . . . . . . . . . . . . .	L Near	 0534	  _TEXT32	
+??003A . . . . . . . . . . . . .	L Near	 053F	  _TEXT32	
+??003B . . . . . . . . . . . . .	L Near	 054A	  _TEXT32	
+??003C . . . . . . . . . . . . .	L Near	 0555	  _TEXT32	
+??003D . . . . . . . . . . . . .	L Near	 0560	  _TEXT32	
+??003E . . . . . . . . . . . . .	L Near	 056B	  _TEXT32	
+??003F . . . . . . . . . . . . .	L Near	 0576	  _TEXT32	
+??0040 . . . . . . . . . . . . .	L Near	 0581	  _TEXT32	
+??0041 . . . . . . . . . . . . .	L Near	 058C	  _TEXT32	
+??0042 . . . . . . . . . . . . .	L Near	 0597	  _TEXT32	
+??0043 . . . . . . . . . . . . .	L Near	 05A2	  _TEXT32	
+??0044 . . . . . . . . . . . . .	L Near	 05AD	  _TEXT32	
+??0045 . . . . . . . . . . . . .	L Near	 05B8	  _TEXT32	
+??0046 . . . . . . . . . . . . .	L Near	 05C3	  _TEXT32	
+??0047 . . . . . . . . . . . . .	L Near	 05CE	  _TEXT32	
+??0048 . . . . . . . . . . . . .	L Near	 05D9	  _TEXT32	
+??0049 . . . . . . . . . . . . .	L Near	 05E4	  _TEXT32	
+??004A . . . . . . . . . . . . .	L Near	 05F7	  _TEXT32	
+??004B . . . . . . . . . . . . .	L Near	 0602	  _TEXT32	
+??004C . . . . . . . . . . . . .	L Near	 060D	  _TEXT32	
+??004D . . . . . . . . . . . . .	L Near	 0618	  _TEXT32	
+??004E . . . . . . . . . . . . .	L Near	 0623	  _TEXT32	
+??004F . . . . . . . . . . . . .	L Near	 062E	  _TEXT32	
+??0050 . . . . . . . . . . . . .	L Near	 0639	  _TEXT32	
+??0051 . . . . . . . . . . . . .	L Near	 0644	  _TEXT32	
+??0052 . . . . . . . . . . . . .	L Near	 064F	  _TEXT32	
+??0053 . . . . . . . . . . . . .	L Near	 065A	  _TEXT32	
+??0054 . . . . . . . . . . . . .	L Near	 0665	  _TEXT32	
+??0055 . . . . . . . . . . . . .	L Near	 0670	  _TEXT32	
+??0056 . . . . . . . . . . . . .	L Near	 067B	  _TEXT32	
+??0057 . . . . . . . . . . . . .	L Near	 0686	  _TEXT32	
+??0058 . . . . . . . . . . . . .	L Near	 0691	  _TEXT32	
+??0059 . . . . . . . . . . . . .	L Near	 069C	  _TEXT32	
+??005A . . . . . . . . . . . . .	L Near	 06A7	  _TEXT32	
+??005B . . . . . . . . . . . . .	L Near	 06B2	  _TEXT32	
+??005C . . . . . . . . . . . . .	L Near	 06BA	  _TEXT32	
+??005D . . . . . . . . . . . . .	L Near	 06C2	  _TEXT32	
+??005E . . . . . . . . . . . . .	L Near	 06CA	  _TEXT32	
+??005F . . . . . . . . . . . . .	L Near	 06D2	  _TEXT32	
+??0060 . . . . . . . . . . . . .	L Near	 06DA	  _TEXT32	
+??0061 . . . . . . . . . . . . .	L Near	 06E2	  _TEXT32	
+??0062 . . . . . . . . . . . . .	L Near	 06EA	  _TEXT32	
+??0063 . . . . . . . . . . . . .	L Near	 06F2	  _TEXT32	
+??0064 . . . . . . . . . . . . .	L Near	 06FA	  _TEXT32	
+??0065 . . . . . . . . . . . . .	L Near	 0702	  _TEXT32	
+??0066 . . . . . . . . . . . . .	L Near	 070A	  _TEXT32	
+??0067 . . . . . . . . . . . . .	L Near	 0712	  _TEXT32	
+??0068 . . . . . . . . . . . . .	L Near	 071A	  _TEXT32	
+??0069 . . . . . . . . . . . . .	L Near	 0722	  _TEXT32	
+??006A . . . . . . . . . . . . .	L Near	 072A	  _TEXT32	
+??006B . . . . . . . . . . . . .	L Near	 0732	  _TEXT32	
+??006C . . . . . . . . . . . . .	L Near	 0845	  _TEXT32	
+??006D . . . . . . . . . . . . .	L Near	 086F	  _TEXT32	
+??006E . . . . . . . . . . . . .	L Near	 087F	  _TEXT32	
+??006F . . . . . . . . . . . . .	L Near	 0863	  _TEXT32	
+??0070 . . . . . . . . . . . . .	L Near	 089D	  _TEXT32	
+??0071 . . . . . . . . . . . . .	L Near	 08C5	  _TEXT32	
+??0072 . . . . . . . . . . . . .	L Near	 0915	  _TEXT32	
+??0073 . . . . . . . . . . . . .	L Near	 0925	  _TEXT32	
+??0074 . . . . . . . . . . . . .	L Near	 08E3	  _TEXT32	
+??0075 . . . . . . . . . . . . .	L Near	 0943	  _TEXT32	
+??0076 . . . . . . . . . . . . .	L Near	 098D	  _TEXT32	
+??0077 . . . . . . . . . . . . .	L Near	 099D	  _TEXT32	
+??0078 . . . . . . . . . . . . .	L Near	 095A	  _TEXT32	
+??0079 . . . . . . . . . . . . .	L Near	 09BB	  _TEXT32	
+??007A . . . . . . . . . . . . .	L Near	 0A04	  _TEXT32	
+??007B . . . . . . . . . . . . .	L Near	 0A14	  _TEXT32	
+??007C . . . . . . . . . . . . .	L Near	 09D2	  _TEXT32	
+??007D . . . . . . . . . . . . .	L Near	 0A32	  _TEXT32	
+??007E . . . . . . . . . . . . .	L Near	 0A7C	  _TEXT32	
+??007F . . . . . . . . . . . . .	L Near	 0A8C	  _TEXT32	
+??0080 . . . . . . . . . . . . .	L Near	 0A49	  _TEXT32	
+??0081 . . . . . . . . . . . . .	L Near	 0AAA	  _TEXT32	
+??0082 . . . . . . . . . . . . .	L Near	 0AF3	  _TEXT32	
+??0083 . . . . . . . . . . . . .	L Near	 0B03	  _TEXT32	
+??0084 . . . . . . . . . . . . .	L Near	 0AC1	  _TEXT32	
+??0085 . . . . . . . . . . . . .	L Near	 0B21	  _TEXT32	
+??0086 . . . . . . . . . . . . .	L Near	 0B6B	  _TEXT32	
+??0087 . . . . . . . . . . . . .	L Near	 0B7B	  _TEXT32	
+??0088 . . . . . . . . . . . . .	L Near	 0B38	  _TEXT32	
+??0089 . . . . . . . . . . . . .	L Near	 0B99	  _TEXT32	
+??008A . . . . . . . . . . . . .	L Near	 0BE2	  _TEXT32	
+??008B . . . . . . . . . . . . .	L Near	 0BF2	  _TEXT32	
+??008C . . . . . . . . . . . . .	L Near	 0BB0	  _TEXT32	
+??008D . . . . . . . . . . . . .	L Near	 0C10	  _TEXT32	
+BEGSEG . . . . . . . . . . . . .	Word	 0225	  _TEXT	
+CMOS_REG . . . . . . . . . . . .	Number	 0070h	 
+CS_dsc . . . . . . . . . . . . .	L Near	 0016	  _TEXT	
+DS_dsc . . . . . . . . . . . . .	L Near	 001E	  _TEXT	
+GDT_MEM_POS  . . . . . . . . . .	Number	 1000h	 
+GDT_SIZE . . . . . . . . . . . .	Number	 0030h	 
+GDT  . . . . . . . . . . . . . .	L Near	 000E	  _TEXT	
+GS_dsc . . . . . . . . . . . . .	L Near	 0026	  _TEXT	
+IDT_MEM_POS  . . . . . . . . . .	Number	 1500h	 
+IDT_SIZE . . . . . . . . . . . .	Number	 0116h	 
+IDT  . . . . . . . . . . . . . .	L Near	 0044	  _TEXT	
+KB_ACK . . . . . . . . . . . . .	Number	 00FAh	 
+KB_BUTTON_FLAG . . . . . . . . .	Number	 0452h	 
+KB_INIT_TABLE  . . . . . . . . .	L Near	 0164	  _TEXT32	
+KB_QUEUE_CAP . . . . . . . . . .	Number	 000Fh	 
+KB_QUEUE_COUNT . . . . . . . . .	Number	 0404h	 
+KB_QUEUE_DATA  . . . . . . . . .	Number	 040Ah	 
+KB_QUEUE_HEAD  . . . . . . . . .	Number	 0406h	 
+KB_QUEUE_TAIL  . . . . . . . . .	Number	 0408h	 
+KB_TESTOK  . . . . . . . . . . .	Number	 00AAh	 
+KB_TIMEOUT . . . . . . . . . . .	Number	 0450h	 
+KEY_0  . . . . . . . . . . . . .	Number	 000Bh	 
+KEY_1  . . . . . . . . . . . . .	Number	 0002h	 
+KEY_2  . . . . . . . . . . . . .	Number	 0003h	 
+KEY_3  . . . . . . . . . . . . .	Number	 0004h	 
+KEY_4  . . . . . . . . . . . . .	Number	 0005h	 
+KEY_5  . . . . . . . . . . . . .	Number	 0006h	 
+KEY_6  . . . . . . . . . . . . .	Number	 0007h	 
+KEY_7  . . . . . . . . . . . . .	Number	 0008h	 
+KEY_8  . . . . . . . . . . . . .	Number	 0009h	 
+KEY_9  . . . . . . . . . . . . .	Number	 000Ah	 
+KEY_A_DOWN . . . . . . . . . . .	Number	 001Eh	 
+KEY_BACKSPACE  . . . . . . . . .	Number	 000Eh	 
+KEY_B_DOWN . . . . . . . . . . .	Number	 0030h	 
+KEY_CAPSLOCK_DOWN  . . . . . . .	Number	 003Ah	 
+KEY_CAPSLOCK_OFF . . . . . . . .	Number	 00FDh	 
+KEY_CAPSLOCK_ON  . . . . . . . .	Number	 0002h	 
+KEY_C_DOWN . . . . . . . . . . .	Number	 002Eh	 
+KEY_Comma_DOWN . . . . . . . . .	Number	 0033h	 
+KEY_D_DOWN . . . . . . . . . . .	Number	 0020h	 
+KEY_ENTER  . . . . . . . . . . .	Number	 001Ch	 
+KEY_E_DOWN . . . . . . . . . . .	Number	 0012h	 
+KEY_F_DOWN . . . . . . . . . . .	Number	 0021h	 
+KEY_G_DOWN . . . . . . . . . . .	Number	 0022h	 
+KEY_H_DOWN . . . . . . . . . . .	Number	 0023h	 
+KEY_I_DOWN . . . . . . . . . . .	Number	 0017h	 
+KEY_J_DOWN . . . . . . . . . . .	Number	 0024h	 
+KEY_K_DOWN . . . . . . . . . . .	Number	 0025h	 
+KEY_LBracket_DOWN  . . . . . . .	Number	 001Ah	 
+KEY_LEFT_SHIFT_DOWN  . . . . . .	Number	 002Ah	 
+KEY_LEFT_SHIFT_UP  . . . . . . .	Number	 00AAh	 
+KEY_L_DOWN . . . . . . . . . . .	Number	 0026h	 
+KEY_M_DOWN . . . . . . . . . . .	Number	 0032h	 
+KEY_NUMPAD_0 . . . . . . . . . .	Number	 0052h	 
+KEY_NUMPAD_1 . . . . . . . . . .	Number	 004Fh	 
+KEY_NUMPAD_2 . . . . . . . . . .	Number	 0050h	 
+KEY_NUMPAD_3 . . . . . . . . . .	Number	 0051h	 
+KEY_NUMPAD_4 . . . . . . . . . .	Number	 004Bh	 
+KEY_NUMPAD_5 . . . . . . . . . .	Number	 004Ch	 
+KEY_NUMPAD_6 . . . . . . . . . .	Number	 004Dh	 
+KEY_NUMPAD_7 . . . . . . . . . .	Number	 0047h	 
+KEY_NUMPAD_8 . . . . . . . . . .	Number	 0048h	 
+KEY_NUMPAD_9 . . . . . . . . . .	Number	 0049h	 
+KEY_N_DOWN . . . . . . . . . . .	Number	 0031h	 
+KEY_O_DOWN . . . . . . . . . . .	Number	 0018h	 
+KEY_P_DOWN . . . . . . . . . . .	Number	 0019h	 
+KEY_Period_DOWN  . . . . . . . .	Number	 0034h	 
+KEY_Q_DOWN . . . . . . . . . . .	Number	 0010h	 
+KEY_Quote_DOWN . . . . . . . . .	Number	 0028h	 
+KEY_RBracket_DOWN  . . . . . . .	Number	 001Bh	 
+KEY_RIGHT_SHIFT_DOWN . . . . . .	Number	 0036h	 
+KEY_RIGHT_SHIFT_UP . . . . . . .	Number	 00B6h	 
+KEY_R_DOWN . . . . . . . . . . .	Number	 0013h	 
+KEY_SHIFT_AND_CAPS_ON  . . . . .	Number	 0003h	 
+KEY_SHIFT_OFF  . . . . . . . . .	Number	 00FEh	 
+KEY_SHIFT_ON . . . . . . . . . .	Number	 0001h	 
+KEY_S_DOWN . . . . . . . . . . .	Number	 001Fh	 
+KEY_SemiColon_DOWN . . . . . . .	Number	 0027h	 
+KEY_Slash_DOWN . . . . . . . . .	Number	 0035h	 
+KEY_Space_DOWN . . . . . . . . .	Number	 0039h	 
+KEY_TAB  . . . . . . . . . . . .	Number	 000Fh	 
+KEY_T_DOWN . . . . . . . . . . .	Number	 0014h	 
+KEY_U_DOWN . . . . . . . . . . .	Number	 0016h	 
+KEY_V_DOWN . . . . . . . . . . .	Number	 002Fh	 
+KEY_W_DOWN . . . . . . . . . . .	Number	 0011h	 
+KEY_X_DOWN . . . . . . . . . . .	Number	 002Dh	 
+KEY_Y_DOWN . . . . . . . . . . .	Number	 0015h	 
+KEY_Z_DOWN . . . . . . . . . . .	Number	 002Ch	 
+PIC_C0 . . . . . . . . . . . . .	Number	 0020h	 
+PIC_C1 . . . . . . . . . . . . .	Number	 00A0h	 
+PIC_D0 . . . . . . . . . . . . .	Number	 0021h	 
+PIC_D1 . . . . . . . . . . . . .	Number	 00A1h	 
+RIDTR  . . . . . . . . . . . . .	L Near	 0154	  _TEXT	
+SS_dsc . . . . . . . . . . . . .	L Near	 002E	  _TEXT	
+STKPTR . . . . . . . . . . . . .	Word	 0221	  _TEXT	
+SYS_CONTROL_PORT_A . . . . . . .	Number	 0092h	 
+TIMER_VALUE  . . . . . . . . . .	Number	 0400h	 
+VM_BASE  . . . . . . . . . . . .	Number	 B800h	 
+VM_POS . . . . . . . . . . . . .	Number	 0060h	 
+VM_SIZE  . . . . . . . . . . . .	Number	 0FA0h	 
+_TEXT32_BEGIN  . . . . . . . . .	Number	 0000h	 
+_TEXT32_END_ . . . . . . . . . .	Number	 00C9h	 
+_TEXT32_END  . . . . . . . . . .	Number	 0C99h	 
+_TEXT_BEGIN  . . . . . . . . . .	Number	 0000h	 
+__ret  . . . . . . . . . . . . .	L Near	 0199	  _TEXT	
+_a . . . . . . . . . . . . . . .	Number	 0000h	 
+_base  . . . . . . . . . . . . .	Number	 000F0000h   
+_c . . . . . . . . . . . . . . .	Number	 0000h	 
+_dpl . . . . . . . . . . . . . .	Number	 0000h	 
+_ed  . . . . . . . . . . . . . .	Number	 0000h	 
+_eqchar  . . . . . . . . . . . .	Number	 0007h	 
+_g . . . . . . . . . . . . . . .	Number	 0001h	 
+_limit . . . . . . . . . . . . .	Number	 000Fh	 
+_l . . . . . . . . . . . . . . .	Number	 0000h	 
+_name2 . . . . . . . . . . . . .	Text   	 _limit
+_name  . . . . . . . . . . . . .	Text   	 _selector
+_offset  . . . . . . . . . . . .	Number	 000F0770h   
+_p . . . . . . . . . . . . . . .	Number	 0001h	 
+_r . . . . . . . . . . . . . . .	Number	 0001h	 
+_selector  . . . . . . . . . . .	Number	 0008h	 
+_sep . . . . . . . . . . . . . .	Number	 000Ah	 
+_type  . . . . . . . . . . . . .	Number	 -0001h	  
+_t . . . . . . . . . . . . . . .	Number	 0000h	 
+_use32 . . . . . . . . . . . . .	Number	 0001h	 
+_valid . . . . . . . . . . . . .	Number	 0000h	 
+_value . . . . . . . . . . . . .	Text   	 0Fh
+_w . . . . . . . . . . . . . . .	Number	 -0001h	  
+_xerrno  . . . . . . . . . . . .	Number	 0000h	 
+_x . . . . . . . . . . . . . . .	Number	 0000h	 
+chcksm . . . . . . . . . . . . .	L Near	 017E	  _TEXT	
+convert_exit . . . . . . . . . .	L Near	 0732	  _TEXT32	
+convert_shift_up . . . . . . . .	L Near	 046B	  _TEXT32	
+convert_shitf_down . . . . . . .	L Near	 05E9	  _TEXT32	
+cycle  . . . . . . . . . . . . .	L Near	 0164	  _TEXT	
+gdtr . . . . . . . . . . . . . .	L Near	 003E	  _TEXT	
+idtr . . . . . . . . . . . . . .	L Near	 015A	  _TEXT	
+int08  . . . . . . . . . . . . .	Number	 000F0764h   
+int09  . . . . . . . . . . . . .	Number	 000F0770h   
+l1 . . . . . . . . . . . . . . .	L Near	 07DB	  _TEXT32	
+l2 . . . . . . . . . . . . . . .	L Near	 0819	  _TEXT32	
+on_error . . . . . . . . . . . .	L Near	 021D	  _TEXT32	
+pop_err  . . . . . . . . . . . .	L Near	 0820	  _TEXT32	
+push_err . . . . . . . . . . . .	L Near	 07E2	  _TEXT32	
+skipss . . . . . . . . . . . . .	L Near	 01A0	  _TEXT	
+skip . . . . . . . . . . . . . .	L Near	 01B3	  _TEXT	
+start32  . . . . . . . . . . . .	L Near	 0107	  _TEXT32	
+start  . . . . . . . . . . . . .	L Near	 0000	  _TEXT	
+w01  . . . . . . . . . . . . . .	L Near	 01D4	  _TEXT32	
+w0 . . . . . . . . . . . . . . .	L Near	 01C9	  _TEXT32	
+w11  . . . . . . . . . . . . . .	L Near	 0203	  _TEXT32	
+w1 . . . . . . . . . . . . . . .	L Near	 01F8	  _TEXT32	
+wanswer  . . . . . . . . . . . .	L Near	 01F2	  _TEXT32	
+wnext  . . . . . . . . . . . . .	L Near	 0215	  _TEXT32	
+wrepeat  . . . . . . . . . . . .	L Near	 01C3	  _TEXT32	
+
+	   0 Warnings
+	   0 Errors

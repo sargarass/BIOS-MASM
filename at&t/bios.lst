@@ -1,0 +1,531 @@
+GAS LISTING bios.s 			page 1
+
+
+   1              	
+   2              	.code16
+   3              	.section .text
+   4              	.global start
+   5              	
+   6              	.org 0
+   7              	
+   8              	.macro EndOfInterrupt
+   9              	       movb $0x20, %al
+  10              	       outb %al, $PIC_C0
+  11              	.endm
+  12              	
+  13              	.macro KB_ANSWER_CHEAK answer
+  14              	        call kb_wait_answer
+  15              	        inb $0x60
+  16              	        cmp \answer, %al
+  17              	        jne on_error
+  18              	.endm
+  19              	
+  20              	PIC_C0=0x20 # command PIC 0
+  21              	PIC_C1=0xA0 # command PIC 1
+  22              	PIC_D0=0x21 # data PIC 0
+  23              	PIC_D1=0xA1 # data PIC 1
+  24              	
+  25              	start:
+  26              	#	cli
+  27              	#	mov	$0x9000, %sp
+  28              	#	mov	%sp, %ss
+  29              	#	mov	$0xFFFE, %sp
+  30              	#	sti
+  31 0000 2E0FB226 	        lss     %cs:STKPTR, %sp
+  31      E301
+  32              	
+  33 0006 E80600   	        call    pic_init
+  34 0009 E8DF01   	        call	scanbios
+  35 000c E83002   	        call	stop
+  36              	
+  37              	pic_init:
+  38 000f FA       	        cli # запрещаем прерывания
+  39 0010 50       	        push %ax
+  40              	        EndOfInterrupt
+  40 0011 B020     	>  movb $0x20,%al
+  40 0013 E620     	>  outb %al,$PIC_C0
+  41 0015 E6A0     	        outb $PIC_C1
+  42              	
+  43 0017 E82C00   	        call    pit_init
+  44 001a E8FD00   	        call    keyboard_init
+  45              	
+  46 001d B011     	        mov $0x11, %al # ICW 1
+  47 001f E620     	        outb $PIC_C0
+  48 0021 E6A0     	        outb $PIC_C1
+  49              	
+  50 0023 B008     	        mov $0x08, %al # ICW 2
+  51 0025 E621     	        outb $PIC_D0
+  52              	
+  53 0027 B004     	        mov $0x04, %al # ICW 3
+  54 0029 E621     	        outb $PIC_D0
+GAS LISTING bios.s 			page 2
+
+
+  55              	
+  56 002b B005     	        mov $0x05, %al # ICW 4
+  57 002d E621     	        outb $PIC_D0
+  58              	
+  59              	
+  60              	
+  61 002f B070     	        mov $0x70, %al # ICW 2
+  62 0031 E6A1     	        outb $PIC_D1
+  63              	
+  64 0033 B002     	        mov $0x02, %al # ICW 3
+  65 0035 E6A1     	        outb $PIC_D1
+  66              	
+  67 0037 B001     	        mov $0x01, %al # ICW 4
+  68 0039 E6A1     	        outb $PIC_D1
+  69              	
+  70 003b B0B8     	        mov $0xB8, %al # маска IRQ
+  71 003d E621     	        outb $PIC_D0
+  72              	
+  73 003f B08F     	        mov $0x8F, %al # маска IRQ
+  74 0041 E6A1     	        outb $PIC_D1
+  75              	
+  76 0043 58       	        pop %ax
+  77 0044 FB       	        sti # разрешаем прерывания
+  78 0045 C3       	        ret
+  79              	#typedef struct Timer{
+  80              	.equ TIMER_VALUE, 0x00
+  81              	#}
+  82              	
+  83              	pit_init:
+  84 0046 50       	        push %ax
+  85 0047 06       	        push %es
+  86              	
+  87 0048 31C0     	        xor %ax, %ax
+  88 004a 8EC0     	        mov %ax, %es
+  89              	
+  90 004c 26C70620 	        movw $int08_handler, %es:0x08*4
+  90      00B601
+  91 0053 268C0E22 	        mov  %cs, %es:0x08*4+2
+  91      00
+  92              	
+  93 0058 B84000   	        mov $0x40, %ax
+  94 005b 8EC0     	        movw %ax, %es
+  95              	
+  96 005d 26C60600 	        movb $0, %es:TIMER_VALUE
+  96      0000
+  97              	        #movb $0, %es:0x7C
+  98              	        #110110
+  99              	        # 0 - двоичный счётчик
+ 100              	        # 011 переодический генератор меандра
+ 101              	        # 11 - оба байта счётчика используюся
+ 102 0063 B036     	        mov $0b00110110, %al     #70 Hz
+ 103 0065 E643     	        outb $0x43 # управляющий регистр
+ 104              	
+ 105 0067 B89642   	        mov $17046, %ax
+ 106 006a E640     	        outb $0x40
+ 107 006c 88E0     	        mov %ah, %al
+ 108 006e E640     	        outb $0x40
+GAS LISTING bios.s 			page 3
+
+
+ 109              	
+ 110 0070 07       	        pop %es
+ 111 0071 58       	        pop %ax
+ 112              	
+ 113 0072 C3       	        ret
+ 114              	
+ 115              	#typedef struct Queue{
+ 116              	.equ    KB_QUEUE_CAP,   0x0F # 16 элементов
+ 117              	.equ    KB_QUEUE_COUNT, 0x04
+ 118              	.equ    KB_QUEUE_HEAD,  0x06
+ 119              	.equ    KB_QUEUE_TAIL,  0x08
+ 120              	.equ    KB_QUEUE_DATA,  0x0A # 40:0A - 40:4A KB_DATA
+ 121              	#}
+ 122              	
+ 123              	kb_queue_init:
+ 124 0073 1E       	        push %ds
+ 125 0074 52       	        push %dx
+ 126              	
+ 127 0075 BA4000   	        mov $0x40, %dx
+ 128 0078 8EDA     	        mov %dx, %ds
+ 129              	
+ 130 007a C7060400 	        movw $0, %ds:KB_QUEUE_COUNT
+ 130      0000
+ 131 0080 C7060600 	        movw $0, %ds:KB_QUEUE_HEAD
+ 131      0000
+ 132 0086 C7060800 	        movw $0, %ds:KB_QUEUE_TAIL
+ 132      0000
+ 133              	
+ 134 008c 5A       	        pop %dx
+ 135 008d 1F       	        pop %ds
+ 136 008e C3       	        ret
+ 137              	
+ 138              	kb_queue_push: # push al -> queue
+ 139 008f FA       	        cli
+ 140 0090 1E       	        push %ds
+ 141 0091 53       	        push %bx
+ 142              	
+ 143 0092 BB4000   	        mov $0x40, %bx
+ 144 0095 8EDB     	        mov %bx, %ds
+ 145              	
+ 146 0097 8B1E0400 	        movw %ds:KB_QUEUE_COUNT, %bx
+ 147 009b 83FB0F   	        cmpw $KB_QUEUE_CAP, %bx   # if (CAP == COUNT)
+ 148              	
+ 149              	        # обработка ошибки
+ 150 009e 741B     	        je push_err
+ 151              	        # ...
+ 152              	
+ 153 00a0 8B1E0800 	        mov %ds:KB_QUEUE_TAIL, %bx
+ 154 00a4 88470A   	        mov %al, %ds:KB_QUEUE_DATA(%bx)
+ 155              	
+ 156 00a7 43       	        inc %bx
+ 157 00a8 891E0800 	        movw %bx, %ds:KB_QUEUE_TAIL
+ 158              	
+ 159 00ac 83FB0F   	        cmpw $KB_QUEUE_CAP, %bx
+ 160 00af 7506     	        jne l1
+ 161 00b1 C7060800 	        movw $0, %ds:KB_QUEUE_TAIL
+ 161      0000
+GAS LISTING bios.s 			page 4
+
+
+ 162              	l1:
+ 163 00b7 FF060400 	        incw %ds:KB_QUEUE_COUNT
+ 164              	push_err:
+ 165 00bb 5B       	        pop %bx
+ 166 00bc 1F       	        pop %ds
+ 167 00bd FB       	        sti
+ 168 00be C3       	        ret
+ 169              	
+ 170              	kb_queue_pop: # al <- queue
+ 171 00bf FA       	        cli
+ 172 00c0 1E       	        push %ds
+ 173 00c1 53       	        push %bx
+ 174              	
+ 175 00c2 BB4000   	        mov $0x40, %bx
+ 176 00c5 8EDB     	        mov %bx, %ds
+ 177              	        #if QueueEmpty ( q ): error "опустошение"
+ 178 00c7 8B1E0400 	        movw %ds:KB_QUEUE_COUNT, %bx # if (COUNT == 0)
+ 179 00cb 391E0000 	        cmpw %bx, 0x00
+ 180              	        # обработка ошибки
+ 181 00cf 741B     	        je pop_err
+ 182              	
+ 183 00d1 8B1E0600 	        movw %ds:KB_QUEUE_HEAD, %bx
+ 184 00d5 8A470A   	        movb %ds:KB_QUEUE_DATA(%bx), %al
+ 185              	
+ 186 00d8 43       	        incw %bx
+ 187 00d9 891E0600 	        movw %bx, %ds:KB_QUEUE_HEAD
+ 188              	
+ 189 00dd 83FB0F   	        cmpw $KB_QUEUE_CAP, %bx
+ 190 00e0 7506     	        jne l2
+ 191 00e2 C7060600 	        movw $0x0, %ds:KB_QUEUE_HEAD
+ 191      0000
+ 192              	l2:
+ 193 00e8 FF0E0400 	        decw %ds:KB_QUEUE_COUNT
+ 194              	pop_err:
+ 195 00ec 5B       	        pop %bx
+ 196 00ed 1F       	        pop %ds
+ 197 00ee FB       	        sti
+ 198 00ef C3       	        ret
+ 199              	
+ 200              	kb_wait_free_buffer:
+ 201 00f0 66B9FFFF 	        mov $0xFFFF, %ecx
+ 201      0000
+ 202 00f6 E464     	w0:     inb $0x64
+ 203 00f8 A802     	        testb $2, %al
+ 204 00fa 7408     	        jz w01
+ 205              	        
+ 206 00fc 6649     	        dec %ecx
+ 207 00fe 75F6     	        jnz w0
+ 208 0100 0F84B000 	        jz on_error
+ 209              	w01:
+ 210 0104 C3       	        ret
+ 211              	
+ 212              	kb_wait_answer:
+ 213 0105 66B90030 	        mov $0x3000, %ecx
+ 213      0000
+ 214 010b E464     	w1:     inb $0x64, %al
+ 215 010d A801     	        testb $1, %al
+GAS LISTING bios.s 			page 5
+
+
+ 216 010f 7408     	        jz w11
+ 217              	        
+ 218 0111 6649     	        dec %ecx
+ 219 0113 75F6     	        jnz w1
+ 220 0115 0F849B00 	        jz on_error
+ 221              	w11:
+ 222 0119 C3       	        ret
+ 223              	
+ 224              	
+ 225              	keyboard_init:
+ 226              	
+ 227 011a 50       	        push %ax
+ 228 011b 06       	        push %es
+ 229 011c 51       	        push %cx
+ 230 011d 52       	        push %dx
+ 231 011e 89E2     	        mov %sp, %dx
+ 232              	
+ 233 0120 31C0     	        xor %ax, %ax
+ 234 0122 8EC0     	        mov %ax, %es
+ 235              	
+ 236 0124 26C70624 	        movw $int09_handler, %es:0x09*4
+ 236      00CA01
+ 237 012b 268C0E26 	        mov %cs, %es:0x09*4+2
+ 237      00
+ 238              	
+ 239 0130 26C70658 	        movw $int16_handler, %es:0x16*4
+ 239      00E201
+ 240 0137 268C0E5A 	        mov %cs, %es:0x16*4+2
+ 240      00
+ 241              	
+ 242 013c E834FF   	        call kb_queue_init
+ 243              	        
+ 244 013f E8AEFF   	        call kb_wait_free_buffer
+ 245 0142 B0AA     	        mov $0xAA, %al
+ 246 0144 E664     	        outb $0x64
+ 247              	        KB_ANSWER_CHEAK $0x55
+ 247 0146 E8BCFF   	>  call kb_wait_answer
+ 247 0149 E460     	>  inb $0x60
+ 247 014b 3C55     	>  cmp $0x55,%al
+ 247 014d 7565     	>  jne on_error
+ 248              	
+ 249 014f E89EFF   	        call kb_wait_free_buffer
+ 250 0152 B0AB     	        mov $0xAB, %al
+ 251 0154 E664     	        outb $0x64
+ 252              	        KB_ANSWER_CHEAK $0x00
+ 252 0156 E8ACFF   	>  call kb_wait_answer
+ 252 0159 E460     	>  inb $0x60
+ 252 015b 3C00     	>  cmp $0x00,%al
+ 252 015d 7555     	>  jne on_error
+ 253              	
+ 254              	
+ 255 015f E88EFF   	        call kb_wait_free_buffer
+ 256 0162 B0AE     	        mov $0xAE, %al
+ 257 0164 E664     	        outb $0x64
+ 258              	
+ 259 0166 E887FF   	        call kb_wait_free_buffer
+ 260 0169 B0FF     	        mov $0xFF, %al
+GAS LISTING bios.s 			page 6
+
+
+ 261 016b E660     	        outb $0x60
+ 262              	        KB_ANSWER_CHEAK $0xFA
+ 262 016d E895FF   	>  call kb_wait_answer
+ 262 0170 E460     	>  inb $0x60
+ 262 0172 3CFA     	>  cmp $0xFA,%al
+ 262 0174 753E     	>  jne on_error
+ 263              	        KB_ANSWER_CHEAK $0xAA
+ 263 0176 E88CFF   	>  call kb_wait_answer
+ 263 0179 E460     	>  inb $0x60
+ 263 017b 3CAA     	>  cmp $0xAA,%al
+ 263 017d 7535     	>  jne on_error
+ 264              	
+ 265 017f E86EFF   	        call kb_wait_free_buffer
+ 266 0182 B0F5     	        mov $0xF5, %al
+ 267 0184 E660     	        outb $0x60
+ 268              	        KB_ANSWER_CHEAK $0xFA
+ 268 0186 E87CFF   	>  call kb_wait_answer
+ 268 0189 E460     	>  inb $0x60
+ 268 018b 3CFA     	>  cmp $0xFA,%al
+ 268 018d 7525     	>  jne on_error
+ 269              	
+ 270 018f E85EFF   	        call kb_wait_free_buffer
+ 271 0192 B060     	        mov $0x60, %al
+ 272 0194 E664     	        outb $0x64
+ 273              	
+ 274              	
+ 275 0196 E857FF   	        call kb_wait_free_buffer
+ 276 0199 B061     	        mov $0x61, %al
+ 277 019b E660     	        outb $0x60
+ 278              	
+ 279 019d E850FF   	        call kb_wait_free_buffer
+ 280 01a0 B0F4     	        mov $0xF4, %al
+ 281 01a2 E660     	        outb $0x60
+ 282              	        KB_ANSWER_CHEAK $0xFA
+ 282 01a4 E85EFF   	>  call kb_wait_answer
+ 282 01a7 E460     	>  inb $0x60
+ 282 01a9 3CFA     	>  cmp $0xFA,%al
+ 282 01ab 7507     	>  jne on_error
+ 283              	
+ 284              	        #panic
+ 285 01ad 89D4     	        mov %dx, %sp
+ 286 01af 5A       	        pop %dx
+ 287              	
+ 288 01b0 59       	        pop %cx
+ 289 01b1 07       	        pop %es
+ 290 01b2 58       	        pop %ax
+ 291 01b3 C3       	        ret
+ 292              	
+ 293              	on_error:
+ 294 01b4 EBFE     	        jmp on_error
+ 295              	
+ 296              	int08_handler:
+ 297 01b6 50       	        push %ax
+ 298 01b7 06       	        push %es
+ 299              	
+ 300 01b8 B84000   	        mov  $0x40, %ax
+ 301 01bb 8EC0     	        movw %ax, %es
+GAS LISTING bios.s 			page 7
+
+
+ 302 01bd 2666FF06 	        incl %es:TIMER_VALUE
+ 302      0000
+ 303              	
+ 304              	        EndOfInterrupt
+ 304 01c3 B020     	>  movb $0x20,%al
+ 304 01c5 E620     	>  outb %al,$PIC_C0
+ 305              	
+ 306 01c7 07       	        pop %es
+ 307 01c8 58       	        pop %ax
+ 308 01c9 CF       	        iret
+ 309              	
+ 310              	int09_handler:
+ 311 01ca 50       	        push %ax
+ 312 01cb 53       	        push %bx
+ 313              	
+ 314 01cc B0AD     	        mov $0xAD, %al
+ 315 01ce E664     	        outb $0x64
+ 316 01d0 31C0     	        xor %ax, %ax
+ 317              	
+ 318 01d2 E460     	        inb $0x60
+ 319              	
+ 320              	skip1:  # Обработка
+ 321 01d4 E8B8FE   	        call kb_queue_push
+ 322              	
+ 323              	        EndOfInterrupt
+ 323 01d7 B020     	>  movb $0x20,%al
+ 323 01d9 E620     	>  outb %al,$PIC_C0
+ 324              	
+ 325 01db B0AE     	        mov $0xAE, %al
+ 326 01dd E664     	        outb $0x64
+ 327              	
+ 328 01df 5B       	        pop %bx
+ 329 01e0 58       	        pop %ax
+ 330              	
+ 331 01e1 CF       	        iret
+ 332              	
+ 333              	int16_handler:
+ 334 01e2 CF       	        iret
+ 335              	
+ 336 01e3 FEFF0090 	STKPTR: .word   0xFFFE,0x9000
+ 337 01e7 AAFFFF55 		.long	0x55FFFFAA
+ 338              	
+ 339              	scanbios:
+ 340 01eb FA       	        cli
+ 341 01ec FC       		cld
+ 342 01ed BA80BF   	        mov     $0xBF80, %dx
+ 343 01f0 81C28000 	for:	addw    $0x80, %dx
+ 344 01f4 81FA00F0 	check:  cmpw    $0xF000, %dx
+ 345 01f8 7343     	        jae     skip
+ 346              	
+ 347 01fa 8EDA     	        mov	%dx, %ds
+ 348 01fc 31F6     	        xorw    %si, %si # обнуление si (source index)
+ 349 01fe 31C9     	        xorw    %cx, %cx # обнуление cx (counter)
+ 350              	
+ 351 0200 813E0000 	        cmpw    $0xAA55, %ds:0
+ 351      55AA
+ 352 0206 75E8     	        jnz     for
+GAS LISTING bios.s 			page 8
+
+
+ 353              	
+ 354 0208 8A2E0200 	        movb    %ds:2, %ch
+ 355 020c 30DB     	        xorb    %bl, %bl # обнуление bl (base reg)
+ 356              	
+ 357 020e AD       	chcksm:	lodsw # грузим слово в AX
+ 358 020f 00E0     		addb    %ah, %al 
+ 359 0211 00C3     		addb    %al, %bl
+ 360 0213 49       	        decw    %cx
+ 361 0214 75F8     		jnz     chcksm
+ 362              	
+ 363 0216 08DB     		or      %bl, %bl
+ 364 0218 7516     	        jnz     round # всё плохо (модуль не нулевой), улетаем к о�
+ 365              	
+ 366              	        # всё хорошо - дальний вызов
+ 367 021a 60       		pusha # сохраняем  ax, cx, dx, bx, sp, bp, si, di
+ 368 021b 1E       		push    %ds
+ 369 021c 06       		push    %es
+ 370 021d 0FA0     		push    %fs
+ 371 021f 0FA8     		push    %gs
+ 372              	
+ 373 0221 0E       		push    %cs # улетам фиг знает куда long jump
+ 374 0222 682902   		push    $__ret
+ 375 0225 1E       		push    %ds
+ 376 0226 6A03     		push    $0x03
+ 377 0228 CB       		lret
+ 378              	__ret:
+ 379 0229 0FA9     		pop     %gs
+ 380 022b 0FA1     	        pop     %fs
+ 381 022d 07       	        pop     %es
+ 382 022e 1F       	        pop     %ds
+ 383 022f 61       	        popa
+ 384              	
+ 385 0230 C1EE04   	round:  shrw    $4, %si  # достаём смещение и преобразовываем к с�
+ 386 0233 01F2     	        addw    %si, %dx
+ 387 0235 83C27F   	        addw    $0x7F, %dx # округление dx к 0x80 вверх
+ 388 0238 83E280   	        andw    $0xFF80, %dx
+ 389 023b EBB7     	        jmp check
+ 390              	skip:
+ 391 023d FB       	        sti
+ 392 023e C3       	        ret
+ 393              	
+ 394              	
+ 395              	stop:   #cli # если случается NMI
+ 396              	        #hlt
+ 397 023f EBFE     	        jmp     stop
+ 398              	
+ 399              	# real startup entry begins at F000:FFF0
+ 400              	.section .ejump
+ 401 0000 EA       		.byte   0xEA
+ 402 0001 0000     		.word   start
+ 403 0003 00F0     		.word	0xF000
+ 404              	
+ 405 0005 00000000 	.org    0x0E
+ 405      00000000 
+ 405      00
+ 406 000e FC99     		.word   0x99FC
+ 407              	
+GAS LISTING bios.s 			page 9
+
+
+ 408              	.end start
+GAS LISTING bios.s 			page 10
+
+
+DEFINED SYMBOLS
+              bios.s:25     .text:0000000000000000 start
+              bios.s:20     *ABS*:0000000000000020 PIC_C0
+              bios.s:21     *ABS*:00000000000000a0 PIC_C1
+              bios.s:22     *ABS*:0000000000000021 PIC_D0
+              bios.s:23     *ABS*:00000000000000a1 PIC_D1
+              bios.s:336    .text:00000000000001e3 STKPTR
+              bios.s:37     .text:000000000000000f pic_init
+              bios.s:339    .text:00000000000001eb scanbios
+              bios.s:395    .text:000000000000023f stop
+              bios.s:83     .text:0000000000000046 pit_init
+              bios.s:225    .text:000000000000011a keyboard_init
+              bios.s:80     *ABS*:0000000000000000 TIMER_VALUE
+              bios.s:296    .text:00000000000001b6 int08_handler
+              bios.s:116    *ABS*:000000000000000f KB_QUEUE_CAP
+              bios.s:117    *ABS*:0000000000000004 KB_QUEUE_COUNT
+              bios.s:118    *ABS*:0000000000000006 KB_QUEUE_HEAD
+              bios.s:119    *ABS*:0000000000000008 KB_QUEUE_TAIL
+              bios.s:120    *ABS*:000000000000000a KB_QUEUE_DATA
+              bios.s:123    .text:0000000000000073 kb_queue_init
+              bios.s:138    .text:000000000000008f kb_queue_push
+              bios.s:164    .text:00000000000000bb push_err
+              bios.s:162    .text:00000000000000b7 l1
+              bios.s:170    .text:00000000000000bf kb_queue_pop
+              bios.s:194    .text:00000000000000ec pop_err
+              bios.s:192    .text:00000000000000e8 l2
+              bios.s:200    .text:00000000000000f0 kb_wait_free_buffer
+              bios.s:202    .text:00000000000000f6 w0
+              bios.s:209    .text:0000000000000104 w01
+              bios.s:293    .text:00000000000001b4 on_error
+              bios.s:212    .text:0000000000000105 kb_wait_answer
+              bios.s:214    .text:000000000000010b w1
+              bios.s:221    .text:0000000000000119 w11
+              bios.s:310    .text:00000000000001ca int09_handler
+              bios.s:333    .text:00000000000001e2 int16_handler
+              bios.s:320    .text:00000000000001d4 skip1
+              bios.s:343    .text:00000000000001f0 for
+              bios.s:344    .text:00000000000001f4 check
+              bios.s:390    .text:000000000000023d skip
+              bios.s:357    .text:000000000000020e chcksm
+              bios.s:385    .text:0000000000000230 round
+              bios.s:378    .text:0000000000000229 __ret
+
+NO UNDEFINED SYMBOLS

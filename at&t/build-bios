@@ -1,0 +1,76 @@
+#!/bin/bash
+
+function build_this
+{
+	echo -e "\n\nBuild $1.bin file(s)\n"
+	if [ -f $1.o ]; then rm -f $1.o; fi
+	if [ -f $1.tmp ]; then rm -f $1.tmp; fi
+	if [ -f $1.bin ]; then rm -f $1.bin; fi
+
+	echo "as -o $1.o -alhsm=$1.lst --32 $1.s"
+	as -o $1.o -alhsmc=$1.lst --32 $1.s
+	if [ -f $1.o ]; then
+		EJUMP=$(cat $1.s |grep "sect.*\s\.ejump")
+		if [ -z "$EJUMP" ]; then
+			SCRIPT=$THISUTIL-ld-script
+		else
+			SCRIPT=$THISUTIL-ld-script-64K
+		fi
+		echo "ld -o $1.bin -Map=$1.map $1.o --default-script=$SCRIPT"
+		ld -o $1.bin -Map=$1.map $1.o --default-script=$SCRIPT
+		rm -f $1.o
+	fi
+
+	if [ -f $1.bin -a -n "$CHKUTIL" ]; then
+		echo $CHKUTIL $1.bin
+		$CHKUTIL $1.bin
+	fi
+}
+
+if [ -z "$CPU" ]; then CPU="$(uname -m)"; export CPU; fi
+THISUTIL="$0"
+CHKUTIL=$(which build-bios-checksum 2>/dev/null)
+if [ -z "$CHKUTIL" ]; then
+	if [ -x "./build-bios-checksum" ]; then
+		CHKUTIL=./build-bios-checksum
+	else
+		if [ -x "./chk/build-bios-checksum" ]; then
+			CHKUTIL=./chk/build-bios-checksum
+		else
+			CHKUTIL=""
+			if [ -f "./chk/chks.c" ]; then
+				echo gcc -o ./chk/build-bios-checksum -O3 ./chk/chks.c
+				gcc -o ./chk/build-bios-checksum -O3 ./chk/chks.c
+				if [ -x "./chk/build-bios-checksum" ]; then
+					CHKUTIL="./chk/build-bios-checksum"
+				fi
+			else
+				if [ -f "$HOME/bin/chks.c" ]; then
+					echo gcc -o $HOME/bin/build-bios-checksum -O3 $HOME/bin/chks.c
+					gcc -o $HOME/bin/build-bios-checksum -O3 $HOME/bin/chks.c
+					if [ -x "$HOME/bin/build-bios-checksum" ]; then
+						CHKUTIL="$HOME/bin/build-bios-checksum"
+					fi
+				fi
+			fi
+		fi
+	fi
+fi
+
+if [ -z "$1" ]; then
+	if [ -f bios.s ]; then
+		build_this bios;
+	else
+		echo -e "build-bios module\n\tWhere 'module' is a source filename (with or without extension .s)"
+	fi
+else
+	if [ -f "$1" ]; then
+		build_this "${1%.s}"
+	else
+		if [ -f "$1.s" ]; then
+			build_this "$1";
+		else
+			echo -e "Error! can't find nor '$1' nor '$1.s' file(s)\n\nbuild-bios module\n\tWhere 'module' is a source filename (with or without extension .s)"
+		fi
+	fi
+fi

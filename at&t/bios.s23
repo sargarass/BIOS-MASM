@@ -1,0 +1,170 @@
+
+.code16
+.section .text
+.global start
+
+.org 0
+
+start:
+	lss     %cs:STKPTR, %sp
+        call    pic_init
+
+        #call	scanbios
+
+        call	stop
+
+pic_init:
+       cli
+       push %ax
+
+       mov $0x20, %al
+       outb $0x20 #$PIC_C0
+       outb $0xA0 #$PIC_C1
+
+       call pit_init
+       # PIC#0
+       mov $0x11, %al # ICW 1
+       outb $0x20 #$PIC_C0   # ICW 1
+       outb $0xA0 #$PIC_C1
+
+       mov $0x08, %al # ICW 2
+       outb $0x21#$PIC_D0
+
+       mov $0x04, %al # ICW 3
+       outb $0x21 #$PIC_D0
+
+       mov $0x05, %al # ICW 4
+       outb $0x21 #$PIC_D0
+
+
+
+       mov $0x70, %al # ICW 2
+       outb $0xA1 #$PIC_D1
+
+       mov $0x02, %al # ICW 3
+       outb $0xA1 # $PIC_D1
+
+       mov $0x01, %al # ICW 4
+       outb $0xA1 #$PIC_D1
+
+       mov $0xFC, %al # маска IRQ
+       outb $0x21 #$PIC_D0
+
+       mov $0xFF, %al # маска IRQ
+       outb $0xA1 #$PIC_D1
+
+       pop %ax
+       sti
+       ret
+	
+pit_init:
+       push %ax
+       push %es
+
+       xor %ax, %ax
+       mov %ax, %es
+
+       movw $int08_handler, %es:0x08*4
+       mov  %cs, %es:0x08*4+2
+       movw $0x0, 0x46C
+
+       mov $0x36, %al # 100100
+       outb $0x43
+
+       mov $65536, %ax # делитель частоты
+       outb $0x40
+
+       mov %ah, %al
+       outb $0x40
+
+       pop %es
+       pop %ax
+       ret
+
+int08_handler:
+       xchg  %bx, %bx
+       push %ax
+       incl    0x46C
+       movb    $0x20, %al
+       outb    $0x20 #$PIC_C0
+       pop %ax
+       iret
+
+PIC_C0 = 0x20 # command PIC 0
+PIC_C1 = 0xA0 # command PIC 1
+PIC_D0 = 0x21 # data PIC 0
+PIC_D1 = 0xA1 # data PIC 1
+
+STKPTR: .word   0xFFFE,0x9000
+	.long	0x55FFFFAA
+
+scanbios:
+	cld
+        mov     $0xBF80, %dx
+for:	addw    $0x80, %dx
+check:  cmpw    $0xF000, %dx
+        jae     skip
+
+        mov	%dx, %ds
+        xorw    %si, %si # обнуление si (source index)
+        xorw    %cx, %cx # обнуление cx (counter)
+
+        cmpw    $0xAA55, %ds:0
+        jnz     for
+
+        movb    %ds:2, %ch
+        xorb    %bl, %bl # обнуление bl (base reg)
+
+chcksm:	lodsw # грузим слово в AX
+	addb    %ah, %al 
+	addb    %al, %bl
+        decw    %cx
+	jnz     chcksm
+
+	or      %bl, %bl
+        jnz     round # всё плохо (модуль не нулевой), улетаем к округлению размера
+
+        # всё хорошо - дальний вызов
+	pusha # сохраняем  ax, cx, dx, bx, sp, bp, si, di
+	push    %ds
+	push    %es
+	push    %fs
+	push    %gs
+
+	push    %cs # улетам фиг знает куда long jump
+	push    $__ret
+	push    %ds
+	push    $0x03
+	lret
+__ret:
+	pop     %gs
+        pop     %fs
+        pop     %es
+        pop     %ds
+        popa
+
+round:  shrw    $4, %si  # достаём смещение и преобразовываем к сегменту
+        addw    %si, %dx
+        addw    $0x7F, %dx # округление dx к 0x80 вверх
+        andw    $0xFF80, %dx
+        jmp check
+skip:
+        ret
+
+
+stop:  # cli
+       # hlt
+	jmp     stop
+
+
+
+# real startup entry begins at F000:FFF0
+.section .ejump
+	.byte   0xEA
+	.word   start
+	.word	0xF000
+
+.org    0x0E
+	.word   0x99FC
+
+.end start
