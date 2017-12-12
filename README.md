@@ -1,5 +1,4 @@
-# BIOS
-Реализация биоса в рамках курса по низкоуровневому программированию (2014) на MASM
+# BIOS (Low-level programming course (2014))
 
 # Папки
 source -- what was given to students for modification
