@@ -2,69 +2,60 @@
 Реализация биоса в рамках курса по низкоуровневому программированию (2014) на MASM
 
 # Папки
-at&t -- первый вариант биоса написанный на asm с синтаксисом at&t
-chk -- бинарные расширения биоса и утилиты
-source -- что выдавалось студентам для модификации
-src -- последний вариант биоса написанный на MASM
-src5 -- нерабочая (читайте warning) версия биоса со страничным преобразованием
+source -- what was given to students for modification
 
-# Реализовано (src):
-- Инициализация контроллера прерываний
-- Инициализация контроллеров клавиатуры PS/2
-- Инициализация видеоконтролера (выполняет один из модулей-расширений)
-- Инициализация таймера (pit)
-- Переход в защищенный режим
-- Получение нажатой/отжатой клавиши с клавиатуры по прерыванию, которая складывает код в кольцевой буфер
-- Извлечение из кольцевого буфера символа с клавиатуры, конвертация части кодов в ASCII. Поддерживаются модификаторы shift, caps lock.
-- Вывод текста на экран
+chk -- binary extensions of the bios and utilities
 
-# Примечания к сборке основных образов bios от Макарова А.В. (преподаватель ИУ9):
-- Современные средства Visual Studio уже не позволяют строить 16ти разрядные задачи (хотя возможна компиляция в 16ти разрядные объектные файлы). Поэтому
-при сборке образа bios под ОС Windows надо использовать альтернативные средства. С некоторыми ограничениями возможно использование транслятора с
-ассемблера из состава студии (поддерживает 16ти разрядные форматы объектных файлов — опция /omf) совместно с компоновщиком wlink из состава Open Watcom.
-- образ bios является «сырым», так как он сразу должен быть размещен по фиксированным адресам в ПЗУ и не имеет никакого перемещающего загрузчика. Для
-16ти разрядных задач MS-DOS использовались исполняемые файлы в формате «COM» («сырой» исполняемый файл размером не более 64K-256 байт) и в формате
-«EXE» (размер может превышать 64K, но требуется перемещающий загрузчик, корректирующий адреса в процессе загрузки). Кроме того драйвера MS-DOS ранних
-выпусков тоже были в «сыром» формате, но несколько отличном от «COM» файлов (размер не более 64К). Для построения драйверов использовалась
-вспомогательная утилита exe2bin (или exetobin), конвертирующая EXE файл (с некоторыми ограничениями) в образ драйвера. В современных средах разработки
-такая утилита, естественно, отсутствует.
-- в ОС Linux удобнее использовать стандартные средства из binutils для частичной сборки исполняемого файла (ELF) и затем извлечения из него кода в «сыром» виде
-с помощью objcopy.
-- основной образ обязан заканчиваться в конце первого мегабайта адресного пространства, т.е. последний байт, принадлежащий образу, имеет физический адрес
-0x000FFFFF. Обычно размер основного bios кратен 64К (64K, 128K, ...), таким образом размер скомпилированного BIOS тоже должен быть кратен 64K. Это может
-вызывать некоторые сложности при построении образа. Многие трансляторы и компоновщики, способные строить 16ти разрядные приложения, генерируют
-сообщение об ошибке (превышение допустимого размера), если размер построенного образа равен или больше 64K.
-- при построении основного образа bios под ОС Windows необходимо указывать org 100h (если начинать с 0, то образ будет ровно 64K и будет диагностирована
-ошибка «слишком большой размер») и либо позже дописывать 256 нулевых байт перед полученным образом, либо увеличить на 0x100 начальный адрес bios в
-файле bochsrc. Это возможно, так как требования к основному bios накладывают ограничения только на содержимое последних байт образа (начиная с физического
-адреса 000FFFF0), а первые байты никак не регламентированы.
-- при построении расширений bios необходимо начинать с org 0, так как регламентированы именно первые байты.
-- также при построении расширений необходимо обеспечить правильную контрольную сумму, для чего можно предусмотреть в начальных строках кода запись
-16ти разрядной константы -1 (0xFFFF) и, после построения образа, запустить утилиту chks, которая заменит первые встретившиеся 0xFFFF на вычисленную
+at&t -- first version of bios in At&t asm 
 
-# Сборка 
-- Windows: запустить build-bios.bat
+chk -- binary extensions of the bios and utilities
 
-- Linux: установить wine, позволить запускать .exe файлы каталога со скриптом build-bios-intel, запустить build-bios-intel.
+src -- current version of bios in MASM asm
 
-# Для запуска необходимо:
-1 Установить bochs
+src5 -- non-working (read warning) bios version with paging
 
-2 В папке с проектом выполнить в командной строке команду bochs
+# Features (src version):
+- Initializing the Interrupt Controller
+- Initializing the Keyboard Controllers PS/2
+- Initializing the video controller (by one of the extension modules)
+- Initializing the timer (pit)
+- Switch to Protected Mode
+- Getting a pressed / pressed key from the keyboard by interrupting, which push the code to the ring buffer
+- Pop the character from the ring buffer, converting to ASCII symbol. Shift and caps look modifiers are supported.
+- Showing typing text on screen
+
+# How to build 
+- Windows: run build-bios.bat
+
+- Linux: 
+```
+1. install wine
+
+2. allow .exe files from folder which include script "build-bios-intel"
+
+3. run build-bios-intel.
+```
+# How to run:
+1. Rename file "bochsrc" to ".bochsrc"
+
+2. install bochs
+
+3. In the folder with project run in command line
+```
+bochs
+```
 
 # Warning:
-Идущий в комплекте ml.exe не позволяет собирать нормальный биос (по идее добавляется лишний заголовок). Из-за этого, при внесении изменений в код, биос может переставать работать. Иногда одной инструкции "nop" достаточно, чтобы биос снова начинал работать/перестал работать. Проблема к сожалению не была точно локализирована, из-за этого умерла более поздняя версия  биоса со страничным преобразованием (описание задания ниже). Она приводится в папке src5. Отметим, что текущая версия содержит правки в работе с клавиатурой, которых нет в версии со страничным преобразованием.
+Coming in the complete set ml.exe can not collect a normal bios (on idea the superfluous heading is added). Because of this, when making changes to the code, the BIOS can stop working. Sometimes one instruction "nop" can fix this behavior or conversely break down bios. Unfortunately, the problem was not exactly localized, because of this, a later version of the bios with paging stopped working (it locate in src5).
+Note that the current version contains edits in working with the keyboard, which are not included in the version with paging.
 
-# Страничное преобразование задание:
-a) Было включено защищённое страничное преобразование: страницы 2M, страничное преобразование PAE
-режима.
+# Paging task:
+a) A security paging: pages with size 2M with PAE.
 
-b) Для тех страниц, для которых возможно, использовалось наиболее эффективный режим кэширования.
+b) For those pages for which it is possible, the most efficient caching mode was used.
 
-c) Для выполняемого кода bios (диапазон физических адресов 0xF0000..0xFFFFF) использовать линейные
-адреса из диапазона 0xAF0000..0xAFFFFF.
+c) For the executable bios's code (range 0xF0000..0xFFFFF of physical addresses) use linear adresses from range 0xAF0000..0xAFFFFF.
 
-d) Для диапазона линейных адресов BDA (Bios Data Area) использовать физические адреса, начинающиеся
-c адреса 0x200000.
+d) For a range of linear adresses BDA (Bios Data Area), use physical addresses with 0x200000.
 
-e) Для диапазона физических адресов стека использовать линейные адреса с 0x400000.
+e) For a range of physical stack addresses, use linear addresses with 0x400000.
