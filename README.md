@@ -45,7 +45,7 @@ bochs
 ```
 
 # Warning:
-Coming in the complete set ml.exe can not collect a normal bios (on idea the superfluous heading is added). Because of this, when making changes to the code, the BIOS can stop working. Sometimes one instruction "nop" can fix this behavior or conversely break down bios. Unfortunately, the problem was not exactly localized, because of this, a later version of the bios with paging stopped working (it locate in src5).
+Coming in the complete set ml.exe can not collect a normal bios (on idea the superfluous heading is added). Because of this, when making changes to the code, the BIOS can stop working. Sometimes one instruction "nop" can fix this behavior or conversely break down bios. Unfortunately, the problem was not exactly localized, because of this, a later version of the bios with paging stopped working (It is located in src5).
 Note that the current version contains edits in working with the keyboard, which are not included in the version with paging.
 
 # Paging task:
